@@ -1,17 +1,12 @@
-#cpp code owners
-cpp/               @<org>/<repo>-cpp-codeowners
-
-#python code owners
-python/            @<org>/<repo>-python-codeowners
-
-#cmake code owners
-**/CMakeLists.txt  @<org>/<repo>-cmake-codeowners
-**/cmake/          @<org>/<repo>-cmake-codeowners
+#package code owners
+src/             @3d-object-reconstruction-team/3d-object-reconstruction-codeowners
 
 #build/ops code owners
-.github/           @<org>/ops-codeowners 
-ci/                @<org>/ops-codeowners
-conda/             @<org>/ops-codeowners
-**/Dockerfile      @<org>/ops-codeowners
-**/.dockerignore   @<org>/ops-codeowners
-docker/            @<org>/ops-codeowners
+.github/         @3d-object-reconstruction-team/3d-object-reconstruction-codeowners
+deploy/          @3d-object-reconstruction-team/3d-object-reconstruction-codeowners
+docker/          @3d-object-reconstruction-team/3d-object-reconstruction-codeowners
+
+# docs and examples code owners
+docs/            @3d-object-reconstruction-team/3d-object-reconstruction-codeowners
+notebooks/       @3d-object-reconstruction-team/3d-object-reconstruction-codeowners
+data/            @3d-object-reconstruction-team/3d-object-reconstruction-codeowners

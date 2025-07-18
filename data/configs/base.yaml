@@ -1,0 +1,303 @@
+# Main data paths for input and output
+data_path: /workspace/3d-object-reconstruction/data/samples/retail_item/  # Path to input data folder containing images and masks
+workdir: /workspace/3d-object-reconstruction/data/output/retail_item/     # Path to output directory for reconstruction results                                                        
+downscale: 1.0                                                         # not used for now since we specify image downscale for each part.
+# Camera intrinsic parameters in 3x3 matrix format
+camera_config:
+  step: 4                                                             
+  intrinsic:                                                         # Camera(Qoocam) intrinsic matrix, change depending on your camera - check camera's config
+  - 3079.6  # fx
+  - 0       
+  - 2000.0  # cx
+  - 0       
+  - 3075.1  # fy
+  - 1500.01 # cy
+  - 0       
+  - 0       
+  - 1       
+
+# BundleTrack configuration for camera pose estimation and tracking
+bundletrack:
+  debug_dir: /workspace/3d-object-reconstruction/data/output/retail_item/ # Directory for debug outputs
+  SPDLOG: 1                                                            # Logging level
+  USE_GRAY: false                                                      
+  port: '5555'                                                         
+  nerf_port: '9999'                                                    
+  downscale: 1.0                                                       # Image downscale factor for tracking
+  min_resolution: 300                                                   # Minimum resolution for tracking
+  erode_mask: 3                                                        # Mask erosion size to remove boundary artifacts
+  visible_angle: 70                                                    
+
+  # Object segmentation parameters, unused for now since we are using SAM2 for segmentation
+  segmentation:
+    ob_scales:                                                         
+    - 0.3
+    - 0.3
+    - 0.3
+    tolerance: 0.03                                                   
+
+  # Depth map processing parameters
+  depth_processing:
+    zfar: 1.0                                                         # depth max bound, same as nerf far,might need to change depending on scene scale
+    erode:                                                            
+      radius: 1                                                       
+      diff: 0.001                                                     
+      ratio: 0.8                                                      
+    bilateral_filter:                                                
+      radius: 2                                                       
+      sigma_D: 2                                                      
+      sigma_R: 100000                                                 
+    outlier_removal:                                                  
+      num: 30                                                         
+      std_mul: 3                                                      
+    edge_normal_thres: 10                                            
+    denoise_cloud: false                                             
+    percentile: 95                                                    # Percentile for depth truncation
+
+  # Bundle adjustment parameters
+  bundle:
+    num_iter_outter: 7                                               
+    num_iter_inner: 5                                               
+    window_size: 5                                                   #window size for non-keyframe saving
+    max_BA_frames: 10                                                #max frames
+    subset_selection_method: normal_orientation_nearest               
+    depth_association_radius: 5                                       
+    non_neighbor_max_rot: 90                                          #maximum rotation difference between two frames
+    non_neighbor_min_visible: 0.1                                    #minimum convisiblity          
+    icp_pose_rot_thres: 60                                          
+    w_rpi: 0                                                       #not used
+    w_p2p: 1                                                       #not used
+    w_fm: 1                                                        #not used 
+    w_sdf: 0                                                       #not used 
+    w_pm: 0                                                        #not used 
+    robust_delta: 0.005                                            #delta scaled for huberloss 
+    min_fm_edges_newframe: 15                                       
+    image_downscale:                                                #image downscale factor
+    - 4
+    feature_edge_dist_thres: 0.01                                   #sparse feature edge distance threshold, not used
+    feature_edge_normal_thres: 30                                   #sparse feature edge normal threshold, not used
+    max_optimized_feature_loss: 0.03                                #max optimized feature loss,not used
+
+  # Keyframe selection parameters
+  keyframe:
+    min_interval: 1                                                  
+    min_feat_num: 0                                                 
+    min_trans: 0                                                     
+    min_rot: 5                                                       
+    min_visible: 1                                                   
+
+  # SIFT feature detection parameters
+  sift:
+    scales:                                                          
+    - 2
+    - 4
+    - 8
+    max_match_per_query: 5                                          
+    nOctaveLayers: 3                                                
+    contrastThreshold: 0.01                                         
+    edgeThreshold: 50                                               
+    sigma: 1.6                                                      
+
+  # Feature correspondence parameters
+  feature_corres:
+    mutual: true                                                    
+    map_points: true                                                # Use 3D map points
+    max_dist_no_neighbor: 0.01                                      # Maximum distance for non-neighbors
+    max_normal_no_neighbor: 20                                      # Maximum normal angle for non-neighbors
+    max_dist_neighbor: 0.02                                         # Maximum distance for neighbors
+    max_normal_neighbor: 30                                         # Maximum normal angle for neighbors
+    suppression_patch_size: 5                                       
+    max_view_normal_angle: 180                                      
+    min_match_with_ref: 5                                          # Minimum matches with reference
+    resize: 800                                                     
+    rematch_after_nerf: false                                      
+
+  # RANSAC parameters for robust estimation not in use?
+  ransac:
+    max_iter: 2000                                                  # Maximum RANSAC iterations 
+    num_sample: 3                                                   # Number of samples per iteration
+    inlier_dist: 0.01                                              # Inlier distance threshold
+    inlier_normal_angle: 20                                        # Inlier normal angle threshold
+    desired_succ_rate: 0.99                                        # Desired success rate
+    max_trans_neighbor: 0.02                                       # Maximum translation for neighbors
+    max_rot_deg_neighbor: 30                                       # Maximum rotation for neighbors
+    max_trans_no_neighbor: 0.01                                    # Maximum translation for non-neighbors
+    max_rot_no_neighbor: 10                                        # Maximum rotation for non-neighbors
+    epipolar_thres: 1                                              # Epipolar constraint threshold
+    min_match_after_ransac: 5                                      # Minimum matches after RANSAC
+
+  # Point-to-point ICP parameters
+  p2p:
+    projective: false                                              # Use projective ICP
+    max_dist: 0.02                                                # Maximum correspondence distance
+    max_normal_angle: 45                                          # Maximum normal angle difference
+
+  # SDF edge parameters, not in use
+  sdf_edge:
+    max_dist: 0.02                                                
+
+  # Shape reconstruction parameters, not in use
+  shape:
+    res: 0.005                                                    # Voxel resolution
+    xrange:                                                       # X range for reconstruction
+    - -0.2
+    - 0.2
+    yrange:                                                       # Y range for reconstruction
+    - -0.2
+    - 0.2
+    zrange:                                                       # Z range for reconstruction
+    - -0.2
+    - 0.2
+    max_weight: 100                                              # Maximum TSDF weight
+
+# Foundation Stereo parameters for depth estimation
+foundation_stereo:
+  pth_path: /workspace/3d-object-reconstruction/data/weights/foundationstereo/model_best_bp2.pth    
+  cfg_path: /workspace/3d-object-reconstruction/data/weights/foundationstereo/cfg.yaml              
+  dinov2_path: /workspace/3d-object-reconstruction/data/weights/roma/dinov2_vitl14_pretrain.pth    
+  vit_size: vitl                                                 
+  scale: 0.3                                                     # Image scale factor
+  hiera: 0                                                       
+  z_far: 10                                                      
+  remove_invisible: true                                         
+  intrinsic:                                                    # Default camera(Qoocam) intrinsic matrix, changes depending on cameras - check camera's config
+  - 3079.6
+  - 0
+  - 2000.0
+  - 0
+  - 3075.1
+  - 1500.01
+  - 0
+  - 0
+  - 1
+  baseline: 0.0657696127                                        # Stereo baseline(Qoocam), changes depending on cameras
+
+# SAM2 parameters for segmentation
+sam2:
+  checkpoint_path: /workspace/3d-object-reconstruction/data/weights/sam2/sam2.1_hiera_large.pt     
+  model_config: //workspace/3d-object-reconstruction/data/weights/sam2/sam2.1_hiera_l.yaml        
+  bbox:                                                         # Bounding box for segmentation
+  - 1144
+  - 627
+  - 2227
+  - 2232
+  device: cuda                                                  
+
+# NeRF parameters for neural rendering
+nerf:
+  batch_size: 32                                                # Training image batch size, change to smaller bs
+  downscale: 0.2                                               # Image downscale factor
+  min_resolution: 300                                          # Minimum resolution for training
+  n_step: 3000                                                 # Number of training steps
+  save_dir: ???                                                # Directory for saving models
+  netdepth: 8                                                  
+  netwidth: 256                                                
+  netdepth_fine: 8                                             
+  netwidth_fine: 256                                           
+  N_rand: 2048                                                 # Training rays per batch
+  lrate: 0.01                                                  # Learning rate
+  lrate_pose: 0.01                                             # Pose learning rate
+  decay_rate: 0.1                                              # Learning rate decay
+  chunk: 99999999999                                           # Chunk size for inference
+  netchunk: 6553600                                            # Network chunk size
+  no_batching: 0                                               # Disable batching
+  amp: false                                                    # Use mixed precision
+  N_samples: 64                                                # Number of coarse samples
+  N_samples_around_depth: 256                                  # Samples around depth
+  N_importance: 0                                              # Number of fine samples
+  perturb: 1                                                   # Random sampling
+  use_viewdirs: 1                                              # Use view directions
+  i_embed: 1                                                   # Position embedding type 
+  i_embed_views: 2                                             # View direction embedding
+  multires: 8                                                  # Position embedding levels
+  multires_views: 3                                            # View direction embedding levels
+  feature_grid_dim: 2                                          # Feature grid dimension
+  raw_noise_std: 0                                             # Noise standard deviation
+  #logging
+  i_img: 99999                                                 # Image save interval
+  i_weights: 99999                                             # Weight save interval
+  i_mesh: 99999                                                # Mesh save interval
+  i_pose: 999999                                               # Pose save interval
+  i_print: 99999                                               # Print interval
+  #Hash embedding config
+  finest_res: 256                                              # Finest hash resolution
+  base_res: 16                                                 # Base hash resolution
+  num_levels: 16                                               # Number of hash levels
+  log2_hashmap_size: 22                                        # Hash table size
+  #octree config
+  use_octree: 1                                                # Use octree acceleration
+  first_frame_weight: 1                                        # First frame weight
+  denoise_depth_use_octree_cloud: true                        # Use octree for depth denoising
+  octree_embed_base_voxel_size: 0.02                          # Base octree voxel size
+  octree_smallest_voxel_size: 0.02                            # Smallest octree voxel
+  octree_raytracing_voxel_size: 0.02                          # Raytracing voxel size
+  octree_dilate_size: 0.02                                    # Octree dilation size
+  down_scale_ratio: 1                                          # Downscaling ratio
+  bounding_box:                                                # Scene bounding box
+  - - -1
+    - -1
+    - -1
+  - - 1
+    - 1
+    - 1
+  use_mask: 1                                                  # Use segmentation masks
+  dilate_mask_size: 0                                          # Mask dilation size
+  rays_valid_depth_only: true                                  # Only use valid depth rays
+  near: 0.1                                                    # Near plane
+  far: 1.0                                                     # Far plane
+  #loss weights
+  rgb_weight: 10                                               # RGB loss weight
+  depth_weight: 0                                              #depth loss not in use
+  sdf_lambda: 5                                                # SDF weight
+
+  neg_trunc_ratio: 1                                          # Negative truncation ratio
+
+  fs_weight: 100                                              # Free space weight
+  empty_weight: 2                                             # Empty space weight
+  fs_rgb_weight: 0                                            
+  fs_sdf: 0.1                                                 # free spacethreshold
+  trunc_weight: 6000                                          # sdf loss weight, regularize depth
+  tv_loss_weight: 0                                           
+  frame_features: 2                                           # Per-frame feature dimension
+  optimize_poses: 0                                           # Optimize camera poses, 1 for enabled
+  pose_reg_weight: 0                                          # Pose regularization
+  feature_reg_weight: 0.1                                     # Feature regularization
+  share_coarse_fine: 1                                        # Share coarse and fine networks,enabled when N_importance > 0
+  eikonal_weight: 0                                           # Eikonal regularization on normal
+  mode: sdf                                                   # Reconstruction mode
+  
+  #Mesh quality related parameters
+  trunc: 0.004                                                # TSDF truncation, could set larger(0.01) if mesh has holes
+  trunc_start: 0.004                                          # Initial truncation
+  trunc_decay_type: ''                                        # Truncation decay type
+  mesh_resolution: 0.002                                      # grid voxel size for mesh extraction, Recommended equals or smaller than trunc
+  max_trans: 0.02                                             # Maximum translation
+  max_rot: 20                                                 # Maximum rotation
+  mesh_smoothing:                                             # Mesh smoothing parameters
+    enabled: true                                             # Enable smoothing
+    iterations: 2                                             # Number of iterations
+    lambda_: 0.5                                             # Smoothing strength
+    use_taubin: true                                         # Use Taubin smoothing
+  save_octree_clouds: true                                    # Save octree point clouds
+
+# Texture baking parameters
+texture_bake:
+  downscale: 1.0                                              # Texture image scale
+  min_resolution: 300                                        # Minimum resolution for texture baking
+  texture_res: 2048                                           # Texture resolution
+
+# ROMA feature matching parameters
+roma:
+  coarse_res: 560                                             # Coarse resolution
+  upsample_res:                                               # Upsampling resolution
+  - 864
+  - 864
+  device: cuda                                                # Device for inference
+  weights: /workspace/3d-object-reconstruction/data/weights/roma/roma_outdoor.pth        # ROMA weights path
+  dinov2_weights: /workspace/3d-object-reconstruction/data/weights/roma/dinov2_vitl14_pretrain.pth  # DINOv2 weights path
+
+# Base path configuration
+base_path:
+  base_folder: /workspace/3d-object-reconstruction/data/samples/retail_item/               # Base data folder
+  image_folder: /workspace/3d-object-reconstruction/data/samples/retail_item/left/         # Input image folder
+  save_dir: /workspace/3d-object-reconstruction/data/output/retail_item/                   # Output directory

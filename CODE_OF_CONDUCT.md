@@ -2,7 +2,7 @@
 
 ## Overview
 
-Define the code of conduct followed and enforced for __PROJECT__.
+Define the code of conduct followed and enforced for 3D Object Reconstruction.
 
 ### Intended audience
 

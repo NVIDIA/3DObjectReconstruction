@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2023, NVIDIA CORPORATION.
+# Copyright (c) 2025, NVIDIA CORPORATION.
 # Reports relevant environment information useful for diagnosing and
 # debugging __PROJECT__ issues.
 # Usage:
@@ -28,6 +28,24 @@ echo
 
 echo "***CPU***"
 lscpu
+echo
+
+echo "***Docker***"
+which docker && docker --version
+echo
+
+echo "***Docker Compose***"
+if command -v docker-compose &> /dev/null; then
+    docker-compose --version
+elif docker compose version &> /dev/null; then
+    docker compose version
+else
+    echo "docker-compose or docker compose not found"
+fi
+echo
+
+echo "***NVIDIA Container Toolkit***"
+which nvidia-container-toolkit && nvidia-container-toolkit --version
 echo
 
 echo "***CMake***"
