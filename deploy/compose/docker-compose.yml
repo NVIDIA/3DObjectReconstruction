@@ -1,0 +1,73 @@
+services:
+  reconstruction-app:
+    # Build configuration (used when BUILD_MODE=local)
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    
+    # Image configuration - can be overridden with IMAGE_NAME env var
+    image: ${IMAGE_NAME:-3d-object-reconstruction:latest}
+    container_name: 3d-object-reconstruction-container-${USER:-default}
+    
+    # Shared memory size - useful for heavy workloads (adjust this as needed)
+    shm_size: 8gb
+    
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Environment variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/workspace/3d-object-reconstruction
+    
+    # Working directory
+    working_dir: /workspace/3d-object-reconstruction
+    
+    # Volume mounts
+    volumes:
+      # Mount source code
+      - ../../src:/workspace/3d-object-reconstruction/src
+      # Mount data folder
+      - ../../data:/workspace/3d-object-reconstruction/data
+      # Mount notebooks for development
+      - ../../notebooks:/workspace/3d-object-reconstruction/notebooks
+      # Mount README.md
+      - ../../README.md:/workspace/3d-object-reconstruction/README.md
+    
+    # Port mappings (for Jupyter notebook) - dynamically allocated
+    ports:
+      - "${JUPYTER_HOST_PORT:-8888}:8888"
+      
+    # Keep container running
+    stdin_open: true
+    tty: true
+        
+    # Restart policy
+    restart: unless-stopped
+    
+    # User-specific network
+    networks:
+      - reconstruction-network
+
+
+# User-specific network to avoid conflicts
+networks:
+  reconstruction-network:
+    name: 3d-recon-network-${USER:-default}
+    driver: bridge
+
+
+volumes:
+  weights:
+    driver: local
+  output:
+    driver: local 

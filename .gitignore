@@ -1,0 +1,11 @@
+data/weights
+data/output
+datasets/
+weights/
+__pycache__/
+.vscode/
+**/*.pyc
+notebooks/.ipynb_checkpoints/
+data/samples/test/
+src/.ipynb_checkpoints/README-checkpoint.md
+src/test.py

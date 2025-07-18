@@ -4,6 +4,6 @@
 <!-- Note: The pull request title will be included in the CHANGELOG. -->
 
 ## Checklist
-- [ ] I am familiar with the [Contributing Guidelines](https://github.com/rapidsai/rapids-repo-template/blob/HEAD/CONTRIBUTING.md).
-- [ ] New or existing tests cover these changes.
+- [ ] I am familiar with the [Contributing Guidelines](https://github.com/NVIDIA/3DObjectReconstruction/blob/main/CONTRIBUTING.md).
+- [ ] New or existing tests using the default retail item example cover these changes.
 - [ ] The documentation is up to date with these changes.
