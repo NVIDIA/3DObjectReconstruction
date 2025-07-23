@@ -17,7 +17,7 @@ class RoMaConfig:
 @dataclass
 class CameraConfig:
     """Camera configuration."""
-    step: int = 4
+    step: int = field(default=1, metadata={"validate": lambda x: x > 0})
     intrinsic: List[float] = field(default_factory=lambda: [3.0796e+03, 0, 2.0000e+03, 0, 3.0751e+03, 1.50001e+03, 0, 0, 1])
 
 @dataclass

@@ -1,6 +1,6 @@
 # Citation
 
-Please cite the following papers when using this framework:
+Please cite the following papers when using this workflow:
 
 **FoundationStereo**:
 ```bibtex

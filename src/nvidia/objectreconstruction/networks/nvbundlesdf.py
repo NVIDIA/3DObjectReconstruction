@@ -236,11 +236,12 @@ class NVBundleSDF:
         
         # Copy camera intrinsics
         K = reader.K.copy()
+        time_step = reader.time_step
         
-        self.logger.info(f"Processing {len(reader.color_files)} frames for tracking...")
+        self.logger.info(f"Processing {len(reader.color_files) // time_step} frames for tracking...")
         
         # Process all frames
-        for i in range(0, len(reader.color_files), 1):
+        for i in range(0, len(reader.color_files), time_step):
             # Load frame data
             color = reader.get_color(i)
             depth = reader.get_depth(i)

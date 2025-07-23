@@ -46,7 +46,8 @@ class ReconstructionDataLoader:
             raise ValueError("Config must contain 'camera_config' with 'intrinsic' parameter")
             
         self.K = np.array(config['camera_config']['intrinsic']).reshape(3, 3)
-
+        self.time_step = config['camera_config']['step']
+        
         # Find and sort frame files
         left_dir = os.path.join(self.image_dir, 'left/')
         if not os.path.exists(left_dir):

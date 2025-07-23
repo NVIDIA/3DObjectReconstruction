@@ -1,6 +1,6 @@
 # NVIDIA 3D Object Reconstruction Package
 
-A comprehensive framework for high-quality 3D object reconstruction from RGB-D input using neural implicit surfaces, bundle adjustment, and advanced feature matching.
+A comprehensive workflow for high-quality 3D object reconstruction from RGB-D input using neural implicit surfaces, bundle adjustment, and advanced feature matching.
 
 ## Installation
 
@@ -17,24 +17,24 @@ from nvidia.reconstruction3d.object.configs.schema import NVBundleSDFConfig
 # Initialize configuration
 config = NVBundleSDFConfig()
 
-# Create reconstruction pipeline
-pipeline = NVBundleSDF(
+# Create reconstruction workflow
+workflow = NVBundleSDF(
     config_nerf=config.nerf,
     cfg_bundletrack=config.bundletrack, 
     roma_config=config.roma
 )
 
-# Run the reconstruction pipeline
-pipeline.run_track(reader)
-pipeline.run_global_sdf(reader)
-pipeline.run_texture_bake(reader)
+# Run the reconstruction workflow
+workflow.run_track(reader)
+workflow.run_global_sdf(reader)
+workflow.run_texture_bake(reader)
 ```
 
 ## Package Components
 
 ### Networks (`nvidia.reconstruction3d.object.networks`)
 
-- **NVBundleSDF**: Main reconstruction pipeline
+- **NVBundleSDF**: Main reconstruction workflow
 - **FoundationStereoProcessor**: Stereo depth estimation
 - **Sam2Infer**: SAM2-based object segmentation
 - **FeatureMatchingInfer**: RoMa feature matching
@@ -102,7 +102,7 @@ config.sam2.bbox = [1144, 627, 2227, 2232]
 ## Command Line Interface
 
 ```bash
-# Run reconstruction pipeline
+# Run reconstruction workflow
 nvidia-3d-reconstruct --config config.yaml --data-path /path/to/data
 
 # Get help
