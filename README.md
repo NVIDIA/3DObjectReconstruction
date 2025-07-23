@@ -1,19 +1,19 @@
-# NVIDIA 3D Object Reconstruction Framework
+# NVIDIA 3D Object Reconstruction Workflow
 
 Deploy this example to create a **3D object reconstruction workflow** that transforms stereo video input into high-quality 3D assets using state-of-the-art computer vision and neural rendering techniques.
 
-NVIDIA's 3D Object Reconstruction framework represents a significant advancement in automated 3D asset creation. Real-world tests have demonstrated the ability to **generate production-ready 3D meshes with photorealistic textures in under 30 minutes**, enabling rapid digital twin creation and synthetic data generation workflows.
+NVIDIA's 3D Object Reconstruction workflow represents a significant advancement in automated 3D asset creation. Real-world tests have demonstrated the ability to **generate production-ready 3D meshes with photorealistic textures in under 30 minutes**, enabling rapid digital twin creation and synthetic data generation workflows.
 
-**The purpose of this framework is:**
+**The purpose of this workflow is:**
 
 1. To provide a reference implementation of 3D object reconstruction using NVIDIA's AI stack.
 2. To accelerate adoption of 3D AI workflows in computer vision, robotics, and synthetic data generation.
 
 You can get started quickly and achieve high-quality results using your own stereo data by following the [Quickstart guide](#quick-start-recommended).
 
-- [NVIDIA 3D Object Reconstruction Framework](#nvidia-3d-object-reconstruction-framework)
+- [NVIDIA 3D Object Reconstruction Workflow](#nvidia-3d-object-reconstruction-workflow)
   - [What is 3D Object Reconstruction?](#what-is-3d-object-reconstruction)
-  - [How to Use This Framework](#how-to-use-this-framework)
+  - [How to Use This Workflow](#how-to-use-this-workflow)
     - [Preparing your data](#preparing-your-data)
       - [1 – Input data schema](#1--input-data-schema)
       - [2 – Camera calibration](#2--camera-calibration)
@@ -32,7 +32,7 @@ You can get started quickly and achieve high-quality results using your own ster
       - [Software Requirements](#software-requirements)
       - [Development Environment](#development-environment)
   - [BundleSDF Use Cases and Applications](#bundlesdf-use-cases-and-applications)
-  - [Pipeline Overview](#pipeline-overview)
+  - [Workflow Overview](#workflow-overview)
   - [Usage Methods](#usage-methods)
     - [1. Interactive Jupyter Notebook (Recommended)](#1-interactive-jupyter-notebook-recommended)
     - [2. Command Line Interface](#2-command-line-interface)
@@ -46,15 +46,15 @@ You can get started quickly and achieve high-quality results using your own ster
 
 ## What is 3D Object Reconstruction?
 
-3D Object Reconstruction is the process of creating complete three-dimensional digital representations of real-world objects from 2D image sequences. This example implements a state-of-the-art pipeline that combines stereo vision, object segmentation, bundle adjustment, and neural implicit surface reconstruction to produce high-quality 3D meshes with photorealistic textures.
+3D Object Reconstruction is the process of creating complete three-dimensional digital representations of real-world objects from 2D image sequences. This example implements a state-of-the-art workflow that combines stereo vision, object segmentation, bundle adjustment, and neural implicit surface reconstruction to produce high-quality 3D meshes with photorealistic textures.
 
 <div align="center">
-    <img src="data/docs/pipeline_overview.png" alt="Pipeline Overview" title="3D Object Reconstruction Workflow">
+    <img src="data/docs/pipeline_overview.png" alt="Workflow Overview" title="3D Object Reconstruction Workflow">
 </div>
 
-The reconstruction pipeline processes stereo image pairs through four main stages: depth estimation using transformer-based FoundationStereo, object segmentation with SAM2, camera pose tracking via BundleSDF, and neural implicit surface reconstruction using NeRF. The result is production-ready 3D assets compatible with Isaac Sim, Omniverse, and game engines.
+The reconstruction workflow processes stereo image pairs through four main stages: depth estimation using transformer-based FoundationStereo, object segmentation with SAM2, camera pose tracking via BundleSDF, and neural implicit surface reconstruction using NeRF. The result is production-ready 3D assets compatible with Isaac Sim, Omniverse, and game engines.
 
-The pipeline comprises of the following components with different tasks:
+The workflow comprises of the following components with different tasks:
 
 - **FoundationStereo**: Transformer-based stereo depth estimation with sub-pixel accuracy
 - **SAM2**: Video object segmentation for consistent mask generation
@@ -62,7 +62,7 @@ The pipeline comprises of the following components with different tasks:
 - **Neural SDF**: GPU-optimized neural implicit surface reconstruction
 - **RoMa**: Robust feature matching for correspondence establishment
 
-## How to Use This Framework
+## How to Use This Workflow
 
 This reference implementation demonstrates proven techniques for high-quality 3D reconstruction. Key capabilities include:
 
@@ -71,10 +71,10 @@ This reference implementation demonstrates proven techniques for high-quality 3D
 - Neural implicit surface representation for smooth geometry
 - Photorealistic texture generation through view synthesis
 
-To effectively use this framework:
+To effectively use this workflow:
 
 1. **Learn from the reference implementation**
-   - **Deploy the stack**: Follow the Docker Compose setup to experience the complete pipeline
+   - **Deploy the stack**: Follow the Docker Compose setup to experience the complete workflow
    - **Study the notebook**: Walk through the interactive Jupyter tutorial for hands-on learning
    - **Understand the architecture**: Review the code to see how FoundationStereo, SAM2, and BundleSDF integrate
 
@@ -89,7 +89,7 @@ To effectively use this framework:
    - **Production deployment**: Scale using Docker containers in cloud or edge environments
 
 4. **Run reconstruction**
-   - Load stereo data and run the complete pipeline end-to-end
+   - Load stereo data and run the complete workflow end-to-end
    - Monitor processing stages and adjust parameters as needed
    - Export results as textured OBJ meshes for downstream applications
 
@@ -100,7 +100,7 @@ To effectively use this framework:
 
 ### Preparing your data
 
-The framework processes **stereo image sequences** as the primary input. The system expects synchronized left and right camera views with known calibration parameters.
+The workflow processes **stereo image sequences** as the primary input. The system expects synchronized left and right camera views with known calibration parameters.
 
 #### 1&ensp;–&ensp;Input data schema
 
@@ -152,7 +152,7 @@ For best results, capture data following these guidelines:
 
 ### Real-World Results and What to Expect
 
-The NVIDIA 3D Object Reconstruction framework represents a reference implementation of advanced neural rendering techniques. Real-world deployments have demonstrated:
+The NVIDIA 3D Object Reconstruction workflow represents a reference implementation of advanced neural rendering techniques. Real-world deployments have demonstrated:
 
 - **High geometric accuracy**: Sub-millimeter precision for objects 10-50cm in size
 - **Photorealistic textures**: 2048x2048 UV-mapped texture generation
@@ -202,15 +202,15 @@ Once your container is running:
 1. **Open Jupyter**: Navigate to `http://localhost:8888` in your browser
 2. **Start the Demo**: Open `notebooks/3d_object_reconstruction_demo.ipynb`
 3. **Follow the Guide**: Interactive step-by-step reconstruction workflow
-4. **Create 3D Assets**: Complete pipeline from stereo images to textured meshes
+4. **Create 3D Assets**: Complete workflow from stereo images to textured meshes
 
 ## Technical Details
 
 ### Software Components
 
-The framework consists of the following implemented components:
+The workflow consists of the following implemented components:
 
-**Core Pipeline** (`src/nvidia/objectreconstruction/`):
+**Core Workflow** (`src/nvidia/objectreconstruction/`):
 - `networks/`: AI model implementations (FoundationStereo, SAM2, RoMa, SDF)
 - `cli/`: Command-line interface for automated processing
 - `configs/`: Configuration schemas and validation
@@ -225,11 +225,11 @@ The framework consists of the following implemented components:
 **Interactive Development**:
 - Jupyter notebook tutorials and examples
 - Real-time visualization and parameter tuning
-- Step-by-step pipeline execution
+- Step-by-step workflow execution
 
 ### Technical Diagrams
 
-For detailed architecture diagrams and component interactions, see the complete pipeline flow in the [notebook tutorial](notebooks/3d_object_reconstruction_demo.ipynb).
+For detailed architecture diagrams and component interactions, see the complete workflow in the [notebook tutorial](notebooks/3d_object_reconstruction_demo.ipynb).
 
 ### Minimum System Requirements
 
@@ -261,7 +261,7 @@ For detailed architecture diagrams and component interactions, see the complete 
 
 ## Use Cases and Applications
 
-This 3D object reconstruction framework provides advanced capabilities that deliver value across industries and applications:
+This 3D object reconstruction workflow provides advanced capabilities that deliver value across industries and applications:
 
 **Robotics**
 - **3D Asset Creation**: Rapid digitization of physical objects for robotics and simulations
@@ -274,11 +274,11 @@ This 3D object reconstruction framework provides advanced capabilities that deli
 - **Object Recognition/Detection**: Building high-quality 3D models for training recognition/detection systems
 
 
-Our framework delivers robust reconstruction even in dynamic scenarios. It produces exceptional quality 3D models with complex geometries and varied surface materials, preserving fine details down to readable text on object surfaces—capabilities that traditional reconstruction methods struggle to achieve under challenging conditions like occlusions.
+Our workflow delivers robust reconstruction even in dynamic scenarios. It produces exceptional quality 3D models with complex geometries and varied surface materials, preserving fine details down to readable text on object surfaces—capabilities that traditional reconstruction methods struggle to achieve under challenging conditions like occlusions.
 
-## Pipeline Overview
+## Workflow Overview
 
-The reconstruction pipeline consists of four main stages:
+The reconstruction workflow consists of four main stages:
 
 **Step 1: Depth Estimation (FoundationStereo)**
 - Transformer-based stereo depth estimation
@@ -291,11 +291,11 @@ The reconstruction pipeline consists of four main stages:
 - Consistent mask generation and refinement
 
 **Step 3: Component Initialization**
-- Pipeline setup and initialization 
+- Workflow setup and initialization 
 - Neural SDF model initialization
 - Data loader configuration for different processing stages
 
-**Step 4: Reconstruction Pipeline**
+**Step 4: Reconstruction Workflow**
 - **4a. Pose Estimation**: Pose estimation and optimization from sequence of image frames
 - **4b. SDF Training**: Neural implicit surface learning from RGB-D observations
 - **4c. Texture Baking**: High-resolution texture generation with UV mapping
@@ -315,7 +315,7 @@ The Jupyter notebook provides a guided, interactive experience:
 ```
 
 Features:
-- Step-by-step pipeline execution
+- Step-by-step workflow execution
 - Real-time visualization of intermediate results
 - Parameter tuning and experimentation
 - Educational content and explanations
@@ -351,7 +351,7 @@ nvidia-3d-reconstruct \
 
 ## Configuration
 
-The framework uses YAML configuration files for all pipeline parameters:
+The workflow uses YAML configuration files for all workflow parameters:
 
 ```yaml
 # data/configs/base.yaml
@@ -541,7 +541,7 @@ If you encounter issues not covered here:
 
 ## Citation
 
-Please cite the following papers when using this framework:
+Please cite the following papers when using this workflow:
 
 **FoundationStereo**:
 ```bibtex
@@ -571,7 +571,7 @@ This 3D Object Reconstruction example is licensed under the [NVIDIA License](./L
 
 ## Disclaimer
 
-The 3D Object Reconstruction Framework is provided as a reference implementation for educational and research purposes. This implementation downloads weights, installs packages from various dependencies ensure to review the licenses for the components that are being used.  When deploying in production environments, have security experts review potential risks, implement appropriate logging and monitoring, secure communication channels, and integrate proper authentication and authorization controls.
+The 3D Object Reconstruction Workflow is provided as a reference implementation for educational and research purposes. This implementation downloads weights, installs packages from various dependencies ensure to review the licenses for the components that are being used.  When deploying in production environments, have security experts review potential risks, implement appropriate logging and monitoring, secure communication channels, and integrate proper authentication and authorization controls.
 
 # Contribution Guidelines
 
