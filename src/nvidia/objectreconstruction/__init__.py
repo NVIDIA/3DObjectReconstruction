@@ -30,16 +30,16 @@ from .networks.nvbundlesdf import NVBundleSDF
 from .configs.schema import NVBundleSDFConfig
 
 # Individual component imports  
-from .networks.foundationstereo import FoundationStereoProcessor, run_depth_estimation
 from .networks.sam2infer import Sam2Infer, run_mask_extraction
 from .networks.roma import FeatureMatchingInfer
 from .dataloader.reconstruction_dataloader import ReconstructionDataLoader
+from .networks.foundationstereo_onnx import run_depth_estimation_onnx, FoundationStereoProcessorOnnx
 
 __all__ = [
     'NVBundleSDF',
-    'NVBundleSDFConfig', 
-    'FoundationStereoProcessor',
-    'run_depth_estimation',
+    'NVBundleSDFConfig',
+    'FoundationStereoProcessorOnnx',
+    'run_depth_estimation_onnx',
     'Sam2Infer', 
     'run_mask_extraction',
     'FeatureMatchingInfer',

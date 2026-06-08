@@ -9,3 +9,9 @@ notebooks/.ipynb_checkpoints/
 data/samples/test/
 src/.ipynb_checkpoints/README-checkpoint.md
 src/test.py
+_*
+venv/
+data/samples/retail_item/masks/
+nohup.out
+src/nvidia_3d_object_reconstruction.egg-info/
+data/samples/fishing_kit/

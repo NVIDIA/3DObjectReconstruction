@@ -1,4 +1,4 @@
-"""
+"""k
 SAM2 Inference Module for 3D Object Reconstruction.
 
 This module provides functionality for running SAM2 (Segment Anything Model 2)
@@ -11,6 +11,7 @@ original SAM2 video processing pipeline.
 
 import os
 import glob
+import re
 import logging
 import numpy as np
 import torch
@@ -59,7 +60,6 @@ elif torch.backends.mps.is_available():
 else:
     device = torch.device("cpu")
 
-print(f"using device: {device}")
 
 # Configure device-specific settings
 if device.type == "cuda":
@@ -70,7 +70,7 @@ if device.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 elif device.type == "mps":
-    print(
+    logger.warning(
         "\nSupport for MPS devices is preliminary. SAM 2 is trained with CUDA "
         "and might give numerically different outputs and sometimes degraded "
         "performance on MPS. See e.g. "
@@ -137,13 +137,9 @@ def png_compatible_load_video_frames(
     if not frame_names:
         raise RuntimeError(f"No images found in {img_folder}")
 
-    # Sort the filenames
-    try:
-        # Try to sort based on filename pattern (assuming frame_xxxx format)
-        frame_names.sort(key=lambda p: int(os.path.splitext(p)[0][4:]))
-    except (ValueError, IndexError):
-        # Fallback to regular sorting
-        frame_names.sort()
+    # Sort the filenames (numeric sort if possible, else lexicographic, consistent with global usage)
+    
+    frame_names.sort()
 
     # Load the images
     img_paths = [os.path.join(img_folder, frame_name) for frame_name in frame_names]
@@ -335,7 +331,8 @@ def process_directory_masks(
     bbox: Optional[Union[list, np.ndarray]] = None,
     checkpoint_path: str = "/sam2/checkpoints/sam2.1_hiera_large.pt",
     model_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml",
-    device: torch.device = torch.device("cuda")
+    device: torch.device = torch.device("cuda"),
+    logger: logging.Logger = logger
 ) -> None:
     """
     Process all images in a directory and generate masks using a bounding box.
@@ -475,13 +472,12 @@ class Sam2Infer:
                 - bbox: Bounding box for segmentation [x1, y1, x2, y2]
                 - device: Device to run inference on
         """
-        print(config)
         self.checkpoint_path = config['checkpoint_path']
         self.model_config = config['model_config']
         self.bbox = config['bbox']
         self.device = config['device']
 
-    def run(self, rgb_path: str, mask_path: str) -> None:
+    def run(self, rgb_path: str, mask_path: str, logger: logging.Logger = logger) -> None:
         """
         Run mask extraction on a directory of images.
 
@@ -494,7 +490,8 @@ class Sam2Infer:
             mask_path=mask_path,
             bbox=self.bbox,
             checkpoint_path=self.checkpoint_path,
-            model_config=self.model_config
+            model_config=self.model_config, 
+            logger=logger
         )
 
 
@@ -502,7 +499,8 @@ def run_mask_extraction(
     config: Dict[str, Any],
     exp_path: Path,
     rgb_path: Path,
-    mask_path: Path
+    mask_path: Path,
+    logger: logging.Logger = logger
 ) -> bool:
     """
     Set up and run mask extraction with error handling.
@@ -533,7 +531,7 @@ def run_mask_extraction(
     sam2_infer = Sam2Infer(config)
 
     try:
-        sam2_infer.run(str(rgb_path), str(mask_path))
+        sam2_infer.run(str(rgb_path), str(mask_path), logger=logger)
         logger.info("Mask extraction completed successfully")
         return True
     except Exception as e:

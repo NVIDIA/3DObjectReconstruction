@@ -10,7 +10,7 @@ This module contains all the neural network components used in the reconstructio
 - Tool utilities: Point cloud processing, mesh operations
 """
 
-from .foundationstereo import FoundationStereoProcessor, FoundationStereoNet, run_depth_estimation
+from .foundationstereo_onnx import FoundationStereoProcessorOnnx, run_depth_estimation_onnx
 from .nvbundlesdf import NVBundleSDF, vis_camera_poses
 from .sam2infer import Sam2Infer, run_mask_extraction
 from .roma import FeatureMatchingInfer
@@ -27,11 +27,9 @@ from .tool import (
 __all__ = [
     # Main pipeline
     'NVBundleSDF',
-    
     # Individual processors
-    'FoundationStereoProcessor',
-    'FoundationStereoNet', 
-    'run_depth_estimation',
+    'FoundationStereoProcessorOnnx',
+    'run_depth_estimation_onnx',
     'Sam2Infer',
     'run_mask_extraction',
     'FeatureMatchingInfer',

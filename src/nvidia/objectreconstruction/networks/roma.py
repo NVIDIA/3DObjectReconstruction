@@ -10,6 +10,9 @@ import logging
 import math
 import warnings
 from typing import Optional
+# Libs to capture print output from romatch.roma_outdoor and log it as info messages
+import contextlib
+import io
 
 import numpy as np
 import torch
@@ -205,17 +208,29 @@ class FeatureMatchingInfer:
     def _initialize_model(self):
         """Initialize the RoMa model with loaded weights."""
         try:
+            # RoMa requires float32 matmul precision to be 'highest' (TF32 disabled).
+            # See https://github.com/Parskatt/RoMaV2/issues/35
+            torch.set_float32_matmul_precision('highest')
             import romatch
             weights = torch.load(self.weights_path)
             dinov2_weights = torch.load(self.dinov2_weights_path)
 
-            self.model = romatch.roma_outdoor(
-                weights=weights,
-                dinov2_weights=dinov2_weights,
-                coarse_res=self.coarse_res,
-                upsample_res=self.upsample_res,
-                device=self.device
-            )
+
+
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.model = romatch.roma_outdoor(
+                    weights=weights,
+                    dinov2_weights=dinov2_weights,
+                    coarse_res=self.coarse_res,
+                    upsample_res=self.upsample_res,
+                    device=self.device
+                )
+            printed_output = buf.getvalue()
+            if printed_output:
+                for line in printed_output.strip().splitlines():
+                    self.logger.info(f"[roma_outdoor] {line}")
+     
             self.model.eval()
             # to float32
             self.model.to(torch.float32)
@@ -457,7 +472,7 @@ class FeatureMatchingInfer:
                         certainty[0, 0].to(torch.float32),
                     )
 
-    def _process_batch(self, rgbAs: np.ndarray, rgbBs: np.ndarray):
+    def _process_batch(self, rgbAs: np.ndarray, rgbBs: np.ndarray, min_correspondences: int = 1000, max_correspondences: int = 10000):
         """
         Find and return correspondences between source and target images.
 
@@ -475,7 +490,7 @@ class FeatureMatchingInfer:
 
             batch_size = 1
             corres = []
-            for b in tqdm(range(0, len(rgbAs), batch_size)):
+            for b in range(0, len(rgbAs), batch_size):
                 # Convert input to torch tensors if needed
                 if not isinstance(rgbAs, torch.Tensor):
                     rgbAs_batch = torch.from_numpy(
@@ -513,6 +528,14 @@ class FeatureMatchingInfer:
 
                     # Filter by confidence
                     score_mask = cert >= 1.0
+                    if score_mask.sum() < min_correspondences:
+                        val = torch.sort(cert,descending=True)[0][min_correspondences-1]
+                        score_mask = cert >= val
+                    if score_mask.sum() > max_correspondences:
+                        indices = torch.arange(cert.shape[0])[score_mask]
+                        indices = indices[torch.randperm(indices.shape[0])[:max_correspondences]]
+                        score_mask = torch.zeros_like(cert, dtype=torch.bool)
+                        score_mask[indices] = True
                     kptsA = kptsA[score_mask]
                     kptsB = kptsB[score_mask]
 

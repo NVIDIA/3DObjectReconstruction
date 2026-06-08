@@ -12,6 +12,23 @@ REPO_DIR=$( cd "$(dirname "${BASH_SOURCE[0]}")/../../" ; pwd -P )
 # Get the compose directory (where this script and docker-compose.yml are located)
 COMPOSE_DIR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 
+# Detect architecture and set appropriate Dockerfile
+ARCH=$(uname -m)
+case $ARCH in
+    aarch64|arm64)
+        export ARCH_SUFFIX=".aarch64"
+        ARCH_NAME="ARM64/aarch64"
+        ;;
+    x86_64|amd64)
+        export ARCH_SUFFIX=""
+        ARCH_NAME="x86_64/amd64"
+        ;;
+    *)
+        export ARCH_SUFFIX=""
+        ARCH_NAME="$ARCH (unknown, defaulting to x86_64)"
+        ;;
+esac
+
 # Docker image configuration
 LOCAL_IMAGE="3d-object-reconstruction:${USER:-default}"
 CONTAINER_NAME="3d-object-reconstruction-container-${USER:-default}"
@@ -152,12 +169,17 @@ check_requirements() {
 # Function to build Docker image locally
 build_image() {
     print_info "Building Docker image locally..."
+    print_info "Detected architecture: $ARCH_NAME"
+    print_info "Using Dockerfile: docker/Dockerfile${ARCH_SUFFIX}"
     print_info "This may take 30-60 minutes depending on your system..."
-    print_warning "Ensure you have sufficient disk space (>50GB) and a stable internet connection"
+    print_warning "Ensure you have sufficient disk space (>20GB) and a stable internet connection"
     
-    # Check if Dockerfile exists
-    if [ ! -f "$REPO_DIR/docker/Dockerfile" ]; then
-        print_error "Dockerfile not found at $REPO_DIR/docker/Dockerfile"
+    # Check if appropriate Dockerfile exists
+    local dockerfile_path="$REPO_DIR/docker/Dockerfile${ARCH_SUFFIX}"
+    if [ ! -f "$dockerfile_path" ]; then
+        print_error "Dockerfile not found at $dockerfile_path"
+        print_error "Available Dockerfiles:"
+        ls -1 "$REPO_DIR/docker/Dockerfile"* 2>/dev/null || echo "  None found"
         exit 1
     fi
     
@@ -230,8 +252,7 @@ download_weights() {
         ["roma/roma_outdoor.pth"]="9a451dfb65745e777bf916db6ea84933"
         ["sam2/sam2.1_hiera_large.pt"]="2b30654b6112c42a115563c638d238d9"
         ["sam2/sam2.1_hiera_l.yaml"]="e3487369c0d6a94fe67e52416f4b5a5a"
-        ["foundationstereo/cfg.yaml"]="56ab75b42a5424b36c9a0d5227d0e592"
-        ["foundationstereo/model_best_bp2.pth"]="fed9cbbb6f139e64520153d1f469f698"
+        ["foundationstereo/deployable_foundationstereo_small.onnx"]="e5812533894567f698d922ea66a34ebc"
     )
     
     # Download RoMa weights
@@ -287,66 +308,34 @@ download_weights() {
         print_info "sam2.1_hiera_l.yaml already exists"
     fi
     
-    # Download FoundationStereo weights
-    print_info "Downloading FoundationStereo weights..."
-    print_warning "FoundationStereo weights are hosted on Google Drive and may require manual download"
-    
-    if [ ! -f "${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth" ]; then
-        print_info "Attempting to download model_best_bp2.pth from Google Drive..."
+
+    if [ ! -f "${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx" ]; then
         if command -v curl &> /dev/null; then
-            if curl -L "https://drive.usercontent.google.com/download?id=1Yh_2o9QCUrVqZrnAXZ7RUr0zTp3JrMKe&confirm=xxx" -o "${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth"; then
-                if [ -s "${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth" ]; then
-                    print_success "Downloaded model_best_bp2.pth"
+            if curl -L 'https://api.ngc.nvidia.com/v2/models/org/nvidia/team/tao/foundationstereo/deployable_foundation_stereo_s_dynamic_v2.0/files?redirect=true&path=deployable_foundation_stereo_s_dynamic_v2.0.onnx' -o "${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx"; then
+
+                if [ -s "${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx" ]; then
+                    print_success "Downloaded foundationstereo onnx model"
                 else
-                    print_error "Downloaded file is empty. Google Drive may require manual download."
-                    rm -f "${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth"
+                    print_error "Downloaded file is empty. May require manual download from NVIDIA NGC."
+                    rm -f "${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx"
                     download_failures=$((download_failures + 1))
                 fi
             else
-                print_error "Failed to download model_best_bp2.pth from Google Drive"
+                print_error "Failed to download foundationstereo onnx model from ngc"
                 download_failures=$((download_failures + 1))
             fi
         else
-            print_error "curl not available. Cannot download model_best_bp2.pth"
+            print_error "curl not available. Cannot download foundationstereo onnx model"
             download_failures=$((download_failures + 1))
         fi
         
-        if [ ! -f "${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth" ]; then
-            print_warning "Manual download required for model_best_bp2.pth:"
-            print_warning "  URL: https://drive.google.com/file/d/1Yh_2o9QCUrVqZrnAXZ7RUr0zTp3JrMKe/view"
-            print_warning "  Save to: ${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth"
+        if [ ! -f "${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx" ]; then
+            print_warning "Manual download required for foundationstereo onnx model:"
+            print_warning "  URL: 'https://catalog.ngc.nvidia.com/orgs/nvidia/teams/tao/models/foundationstereo/files?version=deployable_foundation_stereo_s_dynamic_v2.0'"
+            print_warning "  Save to: ${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx"
         fi
     else
-        print_info "model_best_bp2.pth already exists"
-    fi
-    
-    if [ ! -f "${REPO_DIR}/data/weights/foundationstereo/cfg.yaml" ]; then
-        print_info "Attempting to download cfg.yaml from Google Drive..."
-        if command -v curl &> /dev/null; then
-            if curl -L "https://drive.usercontent.google.com/download?id=1tidGICH1_kTUUqi42aboKscuMY4IK_Xr&confirm=xxx" -o "${REPO_DIR}/data/weights/foundationstereo/cfg.yaml"; then
-                if [ -s "${REPO_DIR}/data/weights/foundationstereo/cfg.yaml" ]; then
-                    print_success "Downloaded cfg.yaml"
-                else
-                    print_error "Downloaded file is empty. Google Drive may require manual download."
-                    rm -f "${REPO_DIR}/data/weights/foundationstereo/cfg.yaml"
-                    download_failures=$((download_failures + 1))
-                fi
-            else
-                print_error "Failed to download cfg.yaml from Google Drive"
-                download_failures=$((download_failures + 1))
-            fi
-        else
-            print_error "curl not available. Cannot download cfg.yaml"
-            download_failures=$((download_failures + 1))
-        fi
-        
-        if [ ! -f "${REPO_DIR}/data/weights/foundationstereo/cfg.yaml" ]; then
-            print_warning "Manual download required for cfg.yaml:"
-            print_warning "  URL: https://drive.google.com/file/d/1tidGICH1_kTUUqi42aboKscuMY4IK_Xr/view"
-            print_warning "  Save to: ${REPO_DIR}/data/weights/foundationstereo/cfg.yaml"
-        fi
-    else
-        print_info "cfg.yaml already exists"
+        print_info "foundationstereo onnx model already exists"
     fi
     
     # Validate checksums for all downloaded files (unless skipped)
@@ -396,8 +385,7 @@ download_weights() {
         [ ! -f "${REPO_DIR}/data/weights/roma/dinov2_vitl14_pretrain.pth" ] && missing_files+=("roma/dinov2_vitl14_pretrain.pth")
         [ ! -f "${REPO_DIR}/data/weights/sam2/sam2.1_hiera_large.pt" ] && missing_files+=("sam2/sam2.1_hiera_large.pt")
         [ ! -f "${REPO_DIR}/data/weights/sam2/sam2.1_hiera_l.yaml" ] && missing_files+=("sam2/sam2.1_hiera_l.yaml")
-        [ ! -f "${REPO_DIR}/data/weights/foundationstereo/model_best_bp2.pth" ] && missing_files+=("foundationstereo/model_best_bp2.pth")
-        [ ! -f "${REPO_DIR}/data/weights/foundationstereo/cfg.yaml" ] && missing_files+=("foundationstereo/cfg.yaml")
+        [ ! -f "${REPO_DIR}/data/weights/foundationstereo/deployable_foundationstereo_small.onnx" ] && missing_files+=("foundationstereo/deployable_foundationstereo_small.onnx")
         
         if [ ${#missing_files[@]} -gt 0 ]; then
             print_error "Missing weight files:"
@@ -450,6 +438,8 @@ show_usage() {
     echo "  PORT_START_INDEX=9000 $0 start  # Start with custom port range"
     echo ""
     echo "Docker Configuration:"
+    echo "  Architecture: $ARCH_NAME"
+    echo "  Dockerfile: docker/Dockerfile${ARCH_SUFFIX}"
     echo "  Local Image: $LOCAL_IMAGE"
     echo "  Container: $CONTAINER_NAME"
     echo "  Network: $NETWORK_NAME"

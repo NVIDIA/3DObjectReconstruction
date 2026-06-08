@@ -4,19 +4,11 @@ import sys
 import yaml
 import logging
 
-import numpy as np
-import open3d as o3d
-import torch.nn.functional as F
 from tqdm import tqdm
-
-from omegaconf import OmegaConf
 from pathlib import Path
 from typing import Dict, Any
 
-from ..networks.foundationstereo import FoundationStereoProcessor
-from ..networks.sam2infer import Sam2Infer
-
-logger = logging.getLogger("preprocessing")
+logger = logging.getLogger(__name__)
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """
@@ -35,6 +27,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
     try:
         with open(config_path, 'r') as f:
             return yaml.load(f)
+        
     except FileNotFoundError:
         logger.error(f"Configuration file not found: {config_path}")
         sys.exit(1)
@@ -78,40 +71,6 @@ def process_video_frames(config: Dict[str, Any], exp_path: Path, rgb_path: Path)
     read_video(config['video']['input_path'], str(exp_path), config)
 
 
-def depth2xyzmap(depth:np.ndarray, K, uvs:np.ndarray=None, zmin=0.1):
-    invalid_mask = (depth < zmin)
-    H, W = depth.shape[:2]
-    if uvs is None:
-        vs, us = np.meshgrid(np.arange(0, H), np.arange(0, W), sparse=False, indexing='ij')
-        vs = vs.reshape(-1)
-        us = us.reshape(-1)
-    else:
-        uvs = uvs.round().astype(int)
-        us = uvs[:, 0]
-        vs = uvs[:, 1]
-    zs = depth[vs, us]
-    xs = (us - K[0, 2]) * zs / K[0, 0]
-    ys = (vs - K[1, 2]) * zs / K[1, 1]
-    pts = np.stack((xs.reshape(-1), ys.reshape(-1), zs.reshape(-1)), 1)
-    xyz_map = np.zeros((H, W, 3), dtype=np.float32)
-    xyz_map[vs, us] = pts
-    if invalid_mask.any():
-        xyz_map[invalid_mask] = 0
-    return xyz_map
-
-def toOpen3dCloud(points, colors=None, normals=None):
-    cloud = o3d.geometry.PointCloud()
-    cloud.points = o3d.utility.Vector3dVector(points.astype(np.float64))
-    
-    if colors is not None:
-        if colors.max() > 1:
-            colors = colors / 255.0
-        cloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
-    if normals is not None:
-        cloud.normals = o3d.utility.Vector3dVector(normals.astype(np.float64))
-    return cloud
-
-
 def read_video(input_video_path, base_folder, config=None):
     """
     Read stereo video and split it into left and right frames
@@ -126,7 +85,6 @@ def read_video(input_video_path, base_folder, config=None):
     # Try different backends in order of preference
     cap = None
     backends_to_try = [
-        (cv2.CAP_FFMPEG, "FFmpeg"),
         (cv2.CAP_GSTREAMER, "GStreamer"), 
         (cv2.CAP_ANY, "Default")
     ]

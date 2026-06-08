@@ -9,11 +9,9 @@ from .preprocessing import (
     load_config,
     setup_experiment_directory,
     process_video_frames,
-    depth2xyzmap,
-    toOpen3dCloud,
     read_video
 )
-
+from .postprocessing import convert_obj_to_usd, export_usd_to_usdz
 from .structures import dataclass_to_dict
 
 __all__ = [
@@ -21,10 +19,11 @@ __all__ = [
     'load_config',
     'setup_experiment_directory', 
     'process_video_frames',
-    'depth2xyzmap',
-    'toOpen3dCloud',
     'read_video',
     
     # Structure utilities
     'dataclass_to_dict',
+    # Postprocessing functions
+    'convert_obj_to_usd',
+    'export_usd_to_usdz',
 ] 

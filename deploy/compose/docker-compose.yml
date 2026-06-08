@@ -3,7 +3,9 @@ services:
     # Build configuration (used when BUILD_MODE=local)
     build:
       context: ../../
-      dockerfile: docker/Dockerfile
+      # Auto-detect architecture: use Dockerfile.aarch64 for arm64, regular Dockerfile for amd64
+      # Auto-detect architecture: use Dockerfile.aarch64 for ARM64, Dockerfile for x86_64/amd64
+      dockerfile: ${DOCKERFILE:-docker/Dockerfile}${ARCH_SUFFIX}
       args:
         - BUILDKIT_INLINE_CACHE=1
     
@@ -14,20 +16,17 @@ services:
     # Shared memory size - useful for heavy workloads (adjust this as needed)
     shm_size: 8gb
     
-    # GPU support
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # GPU support - use runtime for legacy docker-compose compatibility
+    runtime: nvidia
     
     # Environment variables
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
       - CUDA_VISIBLE_DEVICES=0
       - PYTHONPATH=/workspace/3d-object-reconstruction
+      # PyOpenGL reads this at first OpenGL import; must not rely on in-app assignment after pyrender import.
+      - PYOPENGL_PLATFORM=egl
     
     # Working directory
     working_dir: /workspace/3d-object-reconstruction
@@ -42,6 +41,7 @@ services:
       - ../../notebooks:/workspace/3d-object-reconstruction/notebooks
       # Mount README.md
       - ../../README.md:/workspace/3d-object-reconstruction/README.md
+
     
     # Port mappings (for Jupyter notebook) - dynamically allocated
     ports:
