@@ -126,9 +126,7 @@ nvidia-3d-reconstruct --help
 
 ## License
 
-NVIDIA License (Non-Commercial) - see LICENSE file for details.
-
-**Important**: This software is for non-commercial use only. This package incorporates third-party components under different licenses including CC BY-NC-SA 4.0. Review the complete LICENSE file for all terms and attributions.
+Apache License 2.0 - see LICENSE file for details.
 
 ## Support
 

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 
 # 3D Object Reconstruction Docker Deployment Script
 # Note: This script should be run from anywhere, but it will use the docker-compose.yml
