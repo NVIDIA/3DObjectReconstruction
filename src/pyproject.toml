@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nvidia-3d-object-reconstruction"
-version = "0.1.0"
+version = "0.2.0"
 description = "NVIDIA 3D Object Reconstruction Framework using BundleTrack and Neural Implicit Surfaces"
 readme = "README.md"
 license = {text = "NVIDIA License (Non-Commercial)"}
@@ -30,46 +30,53 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9", 
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Scientific/Engineering :: Image Recognition",
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
     # Core ML/CV libraries
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
     "numpy==1.26.4",
-    "opencv-python>=4.5.0",
+    "plyfile==1.0.3",
+    "opencv-python==4.11.0.86",
     "Pillow>=8.0.0",
     "imageio>=2.9.0",
     "scikit-image>=0.18.0",
-    "scikit-learn>=1.0.0",
-    
+    "scikit-learn==1.6.1",
     # 3D processing
     "open3d>=0.15.0",
-    "trimesh>=3.15.0",
+    "trimesh==4.6.1",
     "pyrender>=0.1.45",
-    
+    "libigl==2.6.1",
+    "xatlas==0.0.10",
     # Configuration and data handling
-    "omegaconf>=2.1.0",
+    "omegaconf==2.3.0",
     "pyyaml>=6.0",
+    "ruamel.yaml",
     "tqdm>=4.60.0",
-    "joblib>=1.1.0",
-    
+    "joblib==1.4.2",
+    "iopath",
+    # Scientific computing
+    "scipy==1.15.1",
+    "pycuda==2025.1",
     # Utilities
     "typing-extensions>=4.0.0",
     "ipympl",
-    
+    "python-multipart==0.0.32",
+    "transformations",
+    # ONNX Runtime
+    "onnxruntime-gpu",
     # External models (these may need to be installed separately)
     # "foundation-stereo>=1.0.0",  # Custom package
     # "roma>=1.0.0",               # RoMa matcher
     # "sam2>=1.0.0",               # SAM2 segmentation
-    "xformers"
+    "xformers",
 ]
 
 [project.optional-dependencies]
@@ -98,11 +105,11 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/NVIDIA/3DObjectReconstruction"
-Documentation = "https://github.com/NVIDIA/3DObjectReconstruction"
-Repository = "https://github.com/NVIDIA/3DObjectReconstruction.git"
-Issues = "https://github.com/NVIDIA/3DObjectReconstruction/issues"
-Changelog = "https://github.com/NVIDIA/3DObjectReconstruction/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/nvidia/3d-object-reconstruction"
+Documentation = "https://nvidia.github.io/3d-object-reconstruction"
+Repository = "https://github.com/nvidia/3d-object-reconstruction.git"
+Issues = "https://github.com/nvidia/3d-object-reconstruction/issues"
+Changelog = "https://github.com/nvidia/3d-object-reconstruction/blob/main/CHANGELOG.md"
 
 [project.scripts]
 nvidia-3d-reconstruct = "nvidia.objectreconstruction.cli.main:main"
@@ -127,7 +134,7 @@ namespaces = true
 # Development tools configuration
 [tool.black]
 line-length = 100
-target-version = ['py38', 'py39', 'py310', 'py311']
+target-version = ['py310', 'py311', 'py312']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -153,7 +160,7 @@ use_parentheses = true
 ensure_newline_before_comments = true
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

@@ -1,0 +1,295 @@
+FROM nvcr.io/nvidia/pytorch:25.04-py3-igpu
+
+# Basic build/runtime deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build git wget curl \
+    libsm6 libxext6 libxrender1 libxrender-dev \
+    libhdf5-serial-dev libtesseract-dev \
+    libeigen3-dev pybind11-dev \
+    freeglut3-dev libgl1-mesa-dev libglu1-mesa-dev libglew-dev libglfw3-dev \
+    libboost-filesystem-dev libboost-date-time-dev libboost-iostreams-dev \
+    libboost-system-dev libboost-program-options-dev libboost-serialization-dev \
+    libflann-dev libzmq3-dev libczmq-dev cppzmq-dev \
+    libvtk9-dev libtbb-dev \
+    libomp5 libomp-dev \
+    libc++-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Install PCL (Point Cloud Library) - required by BundleTrack
+ARG PCL_VERSION=1.10.0
+RUN cd /tmp && \
+    git clone --depth 1 --branch pcl-${PCL_VERSION} https://github.com/PointCloudLibrary/pcl && \
+    mkdir -p /tmp/pcl/build && cd /tmp/pcl/build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_apps=OFF \
+        -DBUILD_tools=OFF \
+        -DBUILD_GPU=OFF \
+        -DBUILD_CUDA=OFF \
+        -DBUILD_examples=OFF \
+        -DBUILD_global_tests=OFF \
+        -DBUILD_simulation=OFF \
+        -DCUDA_BUILD_EMULATION=OFF \
+        -DCMAKE_CXX_FLAGS=-std=c++17 \
+        -DPCL_ENABLE_SSE=ON \
+        -DPCL_SHARED_LIBS=ON \
+        -DWITH_VTK=OFF \
+        -DPCL_ONLY_CORE_POINT_TYPES=ON \
+        -DPCL_COMMON_WARNINGS=OFF \
+        -DPCL_USE_BOOST_SHARED_PTR=ON && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    cd / && rm -rf /tmp/pcl
+
+# Install OpenCV with CUDA support - required by BundleTrack
+ARG OPENCV_VERSION=4.12.0
+RUN cd /tmp && \
+    git clone --depth 1 --branch ${OPENCV_VERSION} https://github.com/opencv/opencv && \
+    git clone --depth 1 --branch ${OPENCV_VERSION} https://github.com/opencv/opencv_contrib && \
+    mkdir -p /tmp/opencv/build && cd /tmp/opencv/build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DOPENCV_EXTRA_MODULES_PATH=/tmp/opencv_contrib/modules \
+        -DWITH_CUDA=ON \
+        -DCUDA_ARCH_BIN="8.7" \
+        -DCUDA_ARCH_PTR_SIZE=8 \
+        -DENABLE_FAST_MATH=ON \
+        -DCUDA_FAST_MATH=ON \
+        -DWITH_CUBLAS=OFF \
+        -DWITH_CUFFT=ON \
+        -DOPENCV_DNN_CUDA=OFF \
+        -DWITH_QT=OFF \
+        -DWITH_OPENGL=OFF \
+        -DWITH_VTK=OFF \
+        -DWITH_GSTREAMER=ON \
+        -DBUILD_opencv_python2=OFF \
+        -DBUILD_opencv_python3=ON \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_TESTS=OFF \
+        -DBUILD_PERF_TESTS=OFF \
+        -DBUILD_opencv_java=OFF \
+        -DBUILD_DOCS=OFF \
+        -DWITH_OPENMP=ON \
+        -DOPENCV_GENERATE_PKGCONFIG=OFF \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DBUILD_opencv_cudacodec=OFF && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig && \
+    cd / && rm -rf /tmp/opencv /tmp/opencv_contrib
+
+# Install YAML-CPP - required by BundleTrack
+# Using apt package to avoid CMake compatibility issues
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libyaml-cpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# CUDA env for builds
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/targets/aarch64-linux/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7"
+ENV MAX_JOBS=1
+
+# Keep pip away from touching torch
+ENV PIP_NO_BINARY=torch,torchvision,torchaudio
+
+
+
+# Use Jetson PyPI mirror first, then NGC, then PyPI
+ENV PIP_INDEX_URL=https://pypi.jetson-ai-lab.io/jp6/cu129
+ENV PIP_EXTRA_INDEX_URL="https://pypi.ngc.nvidia.com https://pypi.org/simple"
+ENV PIP_TRUSTED_HOST=pypi.jetson-ai-lab.io
+
+# Optional but recommended: install cuDSS (some 12.6 builds expect it)
+RUN wget https://developer.download.nvidia.com/compute/cudss/0.6.0/local_installers/cudss-local-tegra-repo-ubuntu2204-0.6.0_0.6.0-1_arm64.deb && \
+    dpkg -i cudss-local-tegra-repo-ubuntu2204-0.6.0_0.6.0-1_arm64.deb && \
+    cp /var/cudss-local-tegra-repo-ubuntu2204-0.6.0/cudss-*-keyring.gpg /usr/share/keyrings/ && \
+    apt-get update && apt-get -y install cudss && \
+    rm -f cudss-local-tegra-repo-ubuntu2204-0.6.0_0.6.0-1_arm64.deb
+
+# Copy requirements file
+COPY src/requirements.txt /tmp/requirements.txt
+
+# Install Python base dependencies from requirements.txt + additional needed packages
+# setuptools must be installed early and explicitly so pkg_resources is available for setup.py / --no-build-isolation
+# Use --no-build-isolation so legacy deps (that lack dist_info) build with container's setuptools.
+# xatlas uses scikit-build-core as build backend; install it so the backend is available without isolation.
+RUN python3 -m pip install -U pip setuptools wheel scikit-build-core && \
+    # Remove old distutils-installed blinker to avoid conflicts
+    rm -rf /usr/lib/python3/dist-packages/blinker* || true && \
+    python3 -m pip install --no-cache-dir --no-build-isolation \
+        # Core dependencies from requirements.txt
+        --ignore-installed \
+        -r /tmp/requirements.txt \
+        # Ensure setuptools (pkg_resources) stays installed for later build steps
+        setuptools \
+        # Additional dependencies needed by the application
+        pandas \
+        scikit-image \
+        pillow \
+        tqdm \
+        requests \
+        pybind11-stubgen \
+        hydra-core \
+        protobuf \
+        # 3D processing libraries
+        open3d==0.19.0 \
+        # NVIDIA Warp for high-performance simulation
+        warp-lang \
+        # Additional utilities
+        pygltflib \
+        ipyevents \
+        # Visualization
+        matplotlib plotly \
+        ipywidgets \
+        # Development tools
+        jupyter jupyterlab notebook \
+    && rm /tmp/requirements.txt
+
+# Fix numpy version
+RUN python3 -m pip install --force-reinstall --no-deps "numpy==1.26.4"
+RUN python3 -m pip install --no-cache-dir "plyfile==1.0.3"
+RUN python3 -m pip install transformations==2024.4.24
+RUN python3 -m pip install pyrender==0.1.45
+RUN python3 -m pip install PyOpenGL==3.1.10 PyOpenGL_accelerate==3.1.10
+RUN python3 -m pip install onnxruntime-gpu==1.23.0
+RUN python3 -m pip install ipympl
+RUN  python3 -m pip install setuptools==72.0.0
+# Suppress setuptools license-classifier deprecation warning from dependencies (non-fatal)
+ENV PYTHONWARNINGS="ignore::setuptools.SetuptoolsDeprecationWarning" 
+RUN git clone https://github.com/NVIDIAGameWorks/kaolin.git /kaolin && \
+    cd /kaolin && git checkout v0.18.0 && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" IGNORE_TORCH_VERSION=1 FORCE_CUDA=1 python3 -m pip install --no-build-isolation --no-cache-dir . && \
+    cd / && rm -rf /kaolin
+# -------- PyTorch3D --------
+RUN python3 -m pip install --no-cache-dir pytorch3d || \
+    (python3 -m pip install -U iopath && \
+     FORCE_CUDA=1 TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" \
+     python3 -m pip install "git+https://github.com/facebookresearch/pytorch3d.git")
+
+# -------- nvdiffrast (NVIDIA Differentiable Rasterizer) --------
+RUN git clone https://github.com/NVlabs/nvdiffrast.git /nvdiffrast && \
+    cd /nvdiffrast && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" python3 -m pip install --no-build-isolation --no-cache-dir . && \
+    cd / && rm -rf /nvdiffrast
+
+# -------- PoseLib (required by RoMa) --------
+# v2.0.5 uses add_subdirectory(pybind11) but has no submodule; provide pybind11 source
+RUN git clone --recursive https://github.com/PoseLib/PoseLib.git /PoseLib && \
+    cd /PoseLib && git checkout v2.0.5 && \
+    git submodule update --init --recursive && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" python3 -m pip install --no-cache-dir --no-build-isolation . && \
+    rm -rf /PoseLib
+
+# -------- fused-local-corr (RoMa dep) --------
+RUN git clone https://github.com/Parskatt/fused-local-corr.git /fused-local-corr && \
+    cd /fused-local-corr && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" FORCE_CUDA=1 python3 setup.py build && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" FORCE_CUDA=1 python3 setup.py install && \
+    rm -rf /fused-local-corr
+
+
+RUN git clone https://github.com/NVLabs/BundleSDF.git /BundleSDF && cd /BundleSDF && git checkout nvbundlesdf && cd / && \
+    cp -r /BundleSDF/mycuda /customize_cuda && \
+    cd /customize_cuda && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" FORCE_CUDA=1 python3 -m pip install . --no-build-isolation && \
+    # build BundleTrack
+    cd /BundleSDF/BundleTrack && mkdir -p build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+    make -j${MAX_JOBS} && \
+    # Get Python site-packages directory dynamically
+    PYTHON_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])") && \
+    echo "Python site-packages: $PYTHON_SITE" && \
+    # Copy BundleTrack libraries to system paths
+    find . -name "my_cpp*.so" -exec cp {} $PYTHON_SITE/ \; && \
+    find . -name "libBundleTrack.so" -exec cp {} /usr/local/lib/ \; && \
+    find . -name "libMY_CUDA_LIB.so" -exec cp {} /usr/local/lib/ \; && \
+    ldconfig && \
+    # Clean up but keep /BundleSDF for workspace access
+    rm -rf /BundleSDF/BundleTrack/build
+
+# -------- RoMa (romatch) --------
+RUN git clone https://github.com/Parskatt/RoMa.git /RoMa && \
+    cd /RoMa && \
+    python3 -m pip install --no-cache-dir -e . && \
+    python3 -m pip install --force-reinstall --no-deps "numpy==1.26.4" && \
+    python3 - <<'PY'
+import romatch, importlib.util, sys; print('romatch OK:', romatch.__file__)
+PY
+
+# -------- SAM 2 (Segment Anything Model 2) --------
+RUN git clone https://github.com/facebookresearch/segment-anything-2.git /sam2 && \
+    cd /sam2 && \
+    # Temporarily unset PIP_NO_BINARY
+    unset PIP_NO_BINARY && \
+    TORCH_CUDA_ARCH_LIST="7.2;8.0;8.7" SAM2_BUILD_CUDA=1 python3 -m pip install --no-cache-dir -e . && \
+    rm -rf /sam2/.git
+
+# Fix version conflicts - ensure numpy stays at 1.x and protobuf is compatible
+RUN python3 -m pip install --force-reinstall --no-deps "numpy==1.26.4"
+
+# Install xatlas for texture baking
+RUN python3 -m pip install --no-cache-dir xatlas
+RUN python3 -m pip install pyyaml --extra-index-url https://pypi.org/simple
+
+# Verify torch is importable before installing Theseus (CUDA errors during build are expected - no GPU in build context)
+RUN python3 -c "import torch; print(f'Torch version: {torch.__version__}'); print('Torch imported successfully')" 2>/dev/null || python3 -c "import torch; print(f'Torch version: {torch.__version__}'); print('Torch imported successfully')"
+
+#install theseus-ai without libsuitesparse-dev
+RUN apt-get update && apt-get install -y libopenblas-dev
+ENV BASPACHO_CUDA_ARGS="-DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.9/bin/nvcc -DBASPACHO_CUDA_ARCHS='70;75;80;86;87'"
+RUN git clone https://github.com/facebookresearch/baspacho.git /baspacho
+RUN cd /baspacho && \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+        ${BASPACHO_CUDA_ARGS} \
+        -DBLA_VENDOR=OpenBLAS \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DBASPACHO_BUILD_TESTS=OFF -DBASPACHO_BUILD_EXAMPLES=OFF \
+        && cmake --build build -- -j16
+RUN pip3 install cython --extra-index-url https://pypi.org/simple
+RUN pip3 install semantic-version==2.10.0 --extra-index-url https://pypi.org/simple
+RUN pip3 install torchlie --extra-index-url https://pypi.org/simple
+RUN pip3 install torchkin --extra-index-url https://pypi.org/simple
+RUN git clone https://github.com/facebookresearch/theseus.git && cd theseus &&\
+BASPACHO_ROOT_DIR=/baspacho pip3 install --no-build-isolation --no-deps .
+ENV LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libopenblas.so.0
+# Create workspace directory
+WORKDIR /workspace
+
+# Copy the application code
+COPY src /workspace/3d-object-reconstruction/src
+COPY README.md /workspace/3d-object-reconstruction/
+COPY notebooks /workspace/3d-object-reconstruction/notebooks
+COPY data /workspace/3d-object-reconstruction/data
+
+ENV PATH="/bin/python3:${PATH}"
+RUN alias python="/bin/python3"
+
+# Install the package in editable mode
+WORKDIR /workspace/3d-object-reconstruction
+RUN python3 -m pip install jetson-stats #check gpu status
+RUN python3 -m pip install --no-deps -e src/
+
+# Pin pyzmq to 25.x to avoid PYZMQ_DRAFT_API backend mismatch with jupyter
+RUN python3 -m pip install "pyzmq>=25.0,<26" --force-reinstall
+# Configure Jupyter (create config without running jupyter to avoid pyzmq import at build time)
+RUN mkdir -p ~/.jupyter && printf '%s\n' \
+    "c.NotebookApp.ip = '0.0.0.0'" \
+    "c.NotebookApp.port = 8888" \
+    "c.NotebookApp.open_browser = False" \
+    "c.NotebookApp.allow_root = True" \
+    "c.NotebookApp.token = ''" \
+    "c.NotebookApp.password = ''" \
+    >> ~/.jupyter/jupyter_notebook_config.py
+
+# Expose Jupyter port
+EXPOSE 8888
+
+# Default working directory
+WORKDIR /workspace/3d-object-reconstruction
+
+# Default command
+CMD ["/bin/bash"]

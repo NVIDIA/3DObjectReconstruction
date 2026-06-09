@@ -1,3 +1,33 @@
+# 3D Object Reconstruction 0.2.0 — Commercial Version (08 Jun 2026)
+
+## New Features
+
+- **ONNX-Based Depth Estimation:** Replaced the PyTorch FoundationStereo model with a deployable ONNX model (`foundationstereo_onnx.py`), enabling faster and more portable inference without requiring PyTorch research dependencies.
+- **Theseus GPU Pose Optimizer:** Extracted the Theseus-based pose optimization into a dedicated `optimizers/` module (`theseus_optimizer.py`), supporting configurable outer/inner iterations, correspondence weighting, and Huber robust loss.
+- **USD and USDZ Export:** Added end-of-pipeline export to USD and USDZ formats (`utils/postprocessing.py`), configurable via `base.yaml` (`export_usd`, `export_usdz` flags).
+- **ARM64 / Jetson Orin Support:** Added `docker/Dockerfile.aarch64` for native ARM64 builds; `deploy.sh` now auto-detects the host architecture and selects the appropriate Dockerfile.
+- **End-to-End Test Suite:** Added a `tests/` directory with `pytest`-based E2E and unit tests, including markers (`unit`, `e2e`, `slow`, `gpu`) and a `test_reconstruction.sh` shell harness.
+- **Granular CLI Logging:** Added a custom `PROGRESS` log level (between `INFO` and `WARNING`) for pipeline step visibility without library noise; new `--verbose`, `--debug`, and `--stage` flags give fine-grained control over log output.
+
+## Improvements
+
+- **Texture Color Fusion:** New configurable color fusion parameters in `base.yaml` (`alpha`, `beta`, `choose_top_n`, `max_angle`, `frame_color_remap`) for improved texture quality on textureless and reflective objects.
+- **RoMa Correspondence Clipping:** Added `min_correspondences` and `max_correspondences` config knobs for RoMa feature matching to prevent OOM on high-density scenes and improve stability on textureless objects.
+- **Bundle Tracking Progress:** Added `tqdm` progress bars to the bundle tracking loop with per-frame status updates (`loading frame`, `eroding mask`, `running BundleTrack`).
+- **Logging Consistency:** Replaced `print` statements with structured `logging` calls throughout the pipeline; `roma_outdoor` stdout is now captured and forwarded to the logger.
+- **Docker Base Image Update:** Upgraded from `deepstream:7.1-triton-multiarch` to `pytorch:25.04-py3`; added CUDA arch targets `10.0` and `12.0`; PCL build now runs in `/tmp` for a cleaner image layer.
+- **Dependency Pinning:** All Python dependencies pinned to exact versions for reproducible builds; Python minimum raised from `3.8` to `3.10`.
+
+## Bug Fixes
+
+- **PyTorch 2.1+ Deprecation:** Replaced `torch.set_default_tensor_type(torch.cuda.FloatTensor)` with `torch.set_default_device("cuda")` to fix deprecation warnings on PyTorch ≥ 2.1.
+- **`igl.signed_distance` Signature:** Fixed 4-return-value unpacking to match the current libigl API (previously caused a `ValueError` at runtime).
+- **RoMa Float32 Precision:** Added `torch.set_float32_matmul_precision('highest')` before RoMa model load to disable TF32 and fix accuracy regressions on Ampere+ GPUs.
+- **EGL Platform Initialization:** Changed `PYOPENGL_PLATFORM` from a hard `os.environ` set to `os.environ.setdefault`, preventing the variable from overriding Docker-level settings on local runs.
+- **SAM2 Frame Sorting:** Simplified frame name sorting to consistent lexicographic order, removing a fragile numeric parse that failed on non-standard filename patterns.
+
+---
+
 # 3D Object Reconstruction 0.1.0 (18 Jul 2025)
 
 ## New Features

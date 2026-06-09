@@ -13,58 +13,42 @@ Classes:
 Functions:
     run_depth_estimation: Main entry point for depth estimation pipeline
 """
-
-import cv2
-import torch
-import imageio
 import numpy as np
-import torch.nn.functional as F
-import sys
-sys.path.append('/FoundationStereo/core')
-from foundation_stereo import FoundationStereo
 from tqdm import tqdm
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Union, Optional
-from loguru import logger
+from typing import Dict, Any, Union, Optional
 from omegaconf import OmegaConf
+import torch
+import onnxruntime
 
+# ORT logs ScatterND and other kernel notices to stderr; not controllable via Python warnings.
+# 0=verbose, 1=info, 2=warning, 3=error, 4=fatal — use 3 to hide warnings during inference.
+onnxruntime.set_default_logger_severity(3)
 
+from torchvision import transforms
+import logging
+logger = logging.getLogger(__name__)
+import PIL
 class InputPadder:
-    """
-    Utility class for padding images to dimensions divisible by a given factor.
+    """Pads images to handle neural network dimension requirements.
 
-    This class ensures that input images have dimensions that are compatible
-    with neural network architectures that require specific divisibility
-    constraints (e.g., divisible by 8 or 32).
-
-    Attributes:
-        ht (int): Original image height
-        wd (int): Original image width
-        _pad (List[int]): Padding values [left, right, top, bottom]
+    Args:
+        dims: Input dimensions (H, W)
+        mode: Padding mode. Defaults to 'sintel'.
+        divis_by: Ensure dimensions are divisible by this value.
+            Defaults to 8.
+        force_square: Force output to be square. Defaults to False.
     """
 
     def __init__(
         self,
-        dims: Tuple[int, ...],
+        dims: tuple,
         mode: str = 'sintel',
         divis_by: int = 8,
-        force_square: bool = False
+        force_square: bool = False,
     ) -> None:
-        """
-        Initialize the InputPadder.
-
-        Args:
-            dims: Image dimensions tuple (..., H, W)
-            mode: Padding mode, either 'sintel' or other
-            divis_by: Factor by which dimensions should be divisible
-            force_square: If True, pad to make image square
-
-        Example:
-            >>> padder = InputPadder((1, 3, 480, 640), divis_by=32)
-            >>> padded_imgs = padder.pad(img1, img2)
-        """
+        """Initialize the padder with given dimensions and parameters."""
         self.ht, self.wd = dims[-2:]
-
         if force_square:
             max_side = max(self.ht, self.wd)
             pad_ht = ((max_side // divis_by) + 1) * divis_by - self.ht
@@ -74,123 +58,85 @@ class InputPadder:
             pad_wd = (((self.wd // divis_by) + 1) * divis_by - self.wd) % divis_by
 
         if mode == 'sintel':
-            self._pad = [
-                pad_wd // 2, pad_wd - pad_wd // 2,
-                pad_ht // 2, pad_ht - pad_ht // 2
-            ]
+            self._pad_left = pad_wd // 2
+            self._pad_right = pad_wd - pad_wd // 2
+            self._pad_top = pad_ht // 2
+            self._pad_bottom = pad_ht - pad_ht // 2
         else:
-            self._pad = [pad_wd // 2, pad_wd - pad_wd // 2, 0, pad_ht]
+            self._pad_left = pad_wd // 2
+            self._pad_right = pad_wd - pad_wd // 2
+            self._pad_top = 0
+            self._pad_bottom = pad_ht
 
-    def pad(self, *inputs: torch.Tensor) -> List[torch.Tensor]:
-        """
-        Apply padding to input tensors.
-
+    def pad(self, *inputs: np.ndarray) -> list[np.ndarray]:
+        """Pad input arrays.
+        
         Args:
-            *inputs: Variable number of 4D tensors to pad
-
+            *inputs: Input numpy arrays of shape [B, C, H, W]
+            
         Returns:
-            List of padded tensors with same order as inputs
-
+            List of padded numpy arrays
+            
         Raises:
-            AssertionError: If any input tensor is not 4-dimensional
+            ValueError: If inputs are not 4D arrays
         """
-        assert all((x.ndim == 4) for x in inputs), \
-            "All inputs must be 4-dimensional tensors"
-        return [F.pad(x, self._pad, mode='replicate') for x in inputs]
+        if not all(x.ndim == 4 for x in inputs):
+            raise ValueError("All inputs must be 4D arrays")
+            
+        pad_width = (
+            (0, 0),
+            (0, 0),
+            (self._pad_top, self._pad_bottom),
+            (self._pad_left, self._pad_right),
+        )
+                    
+        result = [np.pad(x, pad_width, mode='edge') for x in inputs]
+        return result
 
-    def unpad(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Remove padding from a tensor.
-
+    def unpad(self, x: np.ndarray) -> np.ndarray:
+        """Remove padding from array.
+        
         Args:
-            x: 4D tensor to unpad
-
+            x: Input numpy array of shape [B, C, H, W]
+            
         Returns:
-            Tensor with padding removed
-
+            Unpadded numpy array
+            
         Raises:
-            AssertionError: If input tensor is not 4-dimensional
+            ValueError: If input is not a 4D array
         """
-        assert x.ndim == 4, "Input must be a 4-dimensional tensor"
-        ht, wd = x.shape[-2:]
-        c = [
-            self._pad[2], ht - self._pad[3],
-            self._pad[0], wd - self._pad[1]
+        if x.ndim != 4:
+            raise ValueError("Input must be a 4D array")
+            
+        return x[
+            ...,
+            self._pad_top:x.shape[-2] - self._pad_bottom,
+            self._pad_left:x.shape[-1] - self._pad_right,
         ]
-        return x[..., c[0]:c[1], c[2]:c[3]]
 
 
-class FoundationStereoNet(FoundationStereo):
+
+def preprocess_each_image_pair(left_image, right_image, target_size):
     """
-    Wrapper class for FoundationStereo network.
-
-    This class extends the base FoundationStereo class with additional
-    functionality for configuration management, weight loading, and
-    simplified inference interface for stereo depth estimation.
-
-    Attributes:
-        config (Dict[str, Any]): Model configuration parameters
+    load and preprocess each input image. Here we resize the images. 
+    The user may choose to crop the input image instead.
     """
 
-    def __init__(self, config: Dict[str, Any]) -> None:
-        """
-        Initialize the FoundationStereo network.
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+  
 
-        Args:
-            config: Configuration dictionary containing model parameters
-                   including architecture settings and hyperparameters
-
-        Example:
-            >>> config = {'hidden_dims': [128, 128], 'corr_levels': 4}
-            >>> model = FoundationStereoNet(config)
-        """
-        super().__init__(config)
-        self.config = config
-
-    def load_weights(self) -> None:
-        """
-        Load pre-trained weights from checkpoint file.
-
-        The checkpoint file path should be specified in config['pth_path'].
-        The checkpoint is expected to contain a 'model' key with the
-        state dictionary.
-
-        Raises:
-            FileNotFoundError: If checkpoint file doesn't exist
-            KeyError: If checkpoint doesn't contain 'model' key
-            RuntimeError: If state dict loading fails
-        """
-        try:
-            ckpt = torch.load(self.config['pth_path'], weights_only=False)
-            self.load_state_dict(ckpt['model'])
-            logger.info(f"Loaded weights from {self.config['pth_path']}")
-        except FileNotFoundError as e:
-            logger.error(f"Checkpoint file not found: {self.config['pth_path']}")
-            raise e
-        except KeyError as e:
-            logger.error(f"Checkpoint missing 'model' key: {e}")
-            raise e
-
-    def forward(
-        self,
-        left: torch.Tensor,
-        right: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Perform forward pass for stereo depth estimation.
-
-        Args:
-            left: Left stereo image tensor of shape [B, C, H, W]
-            right: Right stereo image tensor of shape [B, C, H, W]
-
-        Returns:
-            Disparity map tensor of shape [B, 1, H, W] representing
-            pixel disparities between left and right images
-        """
-        return super().forward(left, right, iters=32, test_mode=True)
+    transform = transforms.Compose([
+                transforms.Resize(target_size),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean, std=std)])
+    
+    sample_transformed_left = transform(left_image) #avoid rgba
+    sample_transformed_right = transform(right_image)
+    return sample_transformed_left, sample_transformed_right
 
 
-class FoundationStereoProcessor:
+class FoundationStereoProcessorOnnx:
     """
     High-level processor for stereo depth estimation.
 
@@ -212,7 +158,8 @@ class FoundationStereoProcessor:
         self,
         config: Dict[str, Any],
         rgb_path: Path,
-        output_path: Path
+        output_path: Path,
+        logger: logging.Logger = logger
     ) -> None:
         """
         Initialize the stereo depth estimation processor.
@@ -235,17 +182,21 @@ class FoundationStereoProcessor:
         self.config = config
 
         # Initialize and setup the stereo network
-        self.net = FoundationStereoNet(config)
-        self.net.load_weights()
+        providers = ['CUDAExecutionProvider','CPUExecutionProvider'] if config['device'] == 'cuda' else ['CPUExecutionProvider']
+        session_options = onnxruntime.SessionOptions()
+        session_options.log_severity_level = 3
+        self.net = onnxruntime.InferenceSession(
+            config['onnx_path'], session_options, providers=providers
+        )
 
         if not torch.cuda.is_available():
             raise RuntimeError("CUDA is required but not available")
 
-        self.net.cuda()  # Move model to GPU
-        self.net.eval()  # Set to evaluation mode
 
         self.rgb_path = Path(rgb_path)
         self.output_path = Path(output_path)
+
+        self.logger = logger
 
         if not self.rgb_path.exists():
             raise FileNotFoundError(f"RGB path does not exist: {rgb_path}")
@@ -255,6 +206,8 @@ class FoundationStereoProcessor:
 
         # Extract camera parameters from configuration
         self._setup_camera_params()
+
+        
 
     def _discover_images(self) -> None:
         """Discover and sort left stereo images from the input directory."""
@@ -267,9 +220,9 @@ class FoundationStereoProcessor:
         self.left_images = sorted(left_images)
 
         if not self.left_images:
-            logger.warning(f"No images found in {self.rgb_path}")
+            self.logger.warning(f"No images found in {self.rgb_path}")
 
-        logger.info(f"Found {len(self.left_images)} left images")
+        self.logger.info(f"Found {len(self.left_images)} left images")
 
     def _setup_camera_params(self) -> None:
         """Extract and setup camera parameters from configuration."""
@@ -278,8 +231,8 @@ class FoundationStereoProcessor:
         self.intrinsic[:2] *= self.config['scale']
         self.baseline = self.config['baseline']
 
-        logger.info(f"Camera baseline: {self.baseline}")
-        logger.info(f"Image scale factor: {self.config['scale']}")
+        self.logger.info(f"Camera baseline: {self.baseline}")
+        self.logger.info(f"Image scale factor: {self.config['scale']}")
 
     def infer(
         self,
@@ -305,47 +258,53 @@ class FoundationStereoProcessor:
         try:
             # Load images - handle both file paths and numpy arrays
             if isinstance(left_input, (str, Path)):
-                left = imageio.imread(str(left_input))
-                right = imageio.imread(str(right_input))
+                left = PIL.Image.open(str(left_input))
+                right = PIL.Image.open(str(right_input))
             else:
                 # Assume numpy arrays passed directly
-                left = left_input
-                right = right_input
+                left = PIL.Image.fromarray(left_input)
+                right = PIL.Image.fromarray(right_input)
 
             # Validate image shapes
-            if left.shape != right.shape:
+            if np.array(left).shape != np.array(right).shape:
                 raise ValueError(
-                    f"Image shapes don't match: {left.shape} vs {right.shape}"
+                    f"Image shapes don't match: {np.array(left).shape} vs {np.array(right).shape}"
                 )
 
             # Resize images according to configuration scale
             scale = self.config['scale']
-            left = cv2.resize(
-                left, fx=scale, fy=scale, dsize=None,
-                interpolation=cv2.INTER_LINEAR
-            )
-            right = cv2.resize(
-                right, fx=scale, fy=scale, dsize=None,
-                interpolation=cv2.INTER_LINEAR
-            )
-            H, W = left.shape[:2]
+            h,w = left.height, left.width
+            H,W = int(h*scale), int(w*scale)
+            if min(H,W) < self.config['onnx_input_min']:
+                scale = self.config['onnx_input_min'] / min(h,w)
+                self.config['scale'] = scale
+                self._setup_camera_params()
+            if max(H,W) > self.config['onnx_input_max']:
+                scale = self.config['onnx_input_max'] / max(h,w)
+                self.config['scale'] = scale
+                self._setup_camera_params()
+            H,W = int(h*scale), int(w*scale)
 
+            
+
+            left,right = preprocess_each_image_pair(left, right,target_size=(H,W))
             # Convert images to PyTorch tensors and move to GPU
-            img0 = torch.as_tensor(left).cuda().float()[None].permute(0, 3, 1, 2)
-            img1 = torch.as_tensor(right).cuda().float()[None].permute(0, 3, 1, 2)
+            H, W = left.shape[-2:]
+
+            img0=left.unsqueeze(0)[:,:3,:,:]#ensure rgb
+            img1=right.unsqueeze(0)[:,:3,:,:]#ensure rgb
 
             # Pad images to be divisible by 32 for network processing
-            padder = InputPadder(img0.shape, divis_by=32, force_square=False)
+            padder = InputPadder(img0.shape, divis_by=32)
             img0, img1 = padder.pad(img0, img1)
 
-            # Run stereo matching inference
-            with torch.no_grad():
-                disp = self.net(img0, img1)
+            onnx_inputs = {"left_image": img0, "right_image": img1}
+            disp = self.net.run(None, onnx_inputs)[0]
 
             # Remove padding and convert to numpy
-            disp = padder.unpad(disp.float())
-            disp = disp.data.cpu().numpy().reshape(H, W)
-
+            disp = padder.unpad(disp)
+            disp = disp.reshape(H, W)
+            
             if return_disparity:
                 return disp
 
@@ -358,7 +317,7 @@ class FoundationStereoProcessor:
             return depth
 
         except Exception as e:
-            logger.error(f"Inference failed: {e}")
+            self.logger.error(f"Inference failed: {e}")
             raise RuntimeError(f"Stereo inference failed: {e}") from e
 
     def run(self) -> None:
@@ -380,7 +339,7 @@ class FoundationStereoProcessor:
             RuntimeError: If processing fails
         """
         if not self.left_images:
-            logger.warning("No left images found to process")
+            self.logger.warning("No left images found to process")
             return
 
         # Ensure output directory exists
@@ -396,7 +355,7 @@ class FoundationStereoProcessor:
                 right_path = left_path.parent.parent / 'right' / left_path.name.replace('left', 'right')
 
                 if not right_path.exists():
-                    logger.warning(f"Right image not found: {right_path}")
+                    self.logger.warning(f"Right image not found: {right_path}")
                     continue
 
                 # Use the infer method for consistent processing
@@ -410,20 +369,21 @@ class FoundationStereoProcessor:
                 successful_count += 1
 
             except Exception as e:
-                logger.error(f"Failed to process {left_path}: {e}")
+                self.logger.error(f"Failed to process {left_path}: {e}")
                 continue
 
-        logger.info(
-            f"Successfully processed {successful_count}/{len(self.left_images)} "
+        self.logger.info(
+            f"Successfully processed {successful_count}/{len(self.left_images)} with scale {self.config['scale']} with ONNX model "
             f"stereo pairs"
         )
 
 
-def run_depth_estimation(
+def run_depth_estimation_onnx(
     config: Dict[str, Any],
     exp_path: Path,
     rgb_path: Path,
-    depth_path: Optional[Path] = None
+    depth_path: Optional[Path] = None,
+    logger: logging.Logger = logger
 ) -> Optional[bool]:
     """
     Set up and run depth estimation pipeline.
@@ -464,22 +424,22 @@ def run_depth_estimation(
         depth_images_npy = list(depth_path.glob('*.npy'))
         depth_images_png = list(depth_path.glob('*.png'))
         rgb_images = list(rgb_path.glob('*.png'))
-        
+
         # Check if we have sufficient depth images in either format
         if (depth_images_npy and len(depth_images_npy) >= len(rgb_images)) or \
            (depth_images_png and len(depth_images_png) >= len(rgb_images)):
             logger.info("Depth images already exist, skipping depth estimation")
             return True
 
+        
+
         # Run depth estimation
         logger.info("Running depth estimation...")
 
-        # Load additional model configuration
-        cfg_model = OmegaConf.load(config['cfg_path'])
-        args = OmegaConf.merge(OmegaConf.create(config), cfg_model)
+        args =OmegaConf.create(config)
 
         # Initialize and run processor
-        processor = FoundationStereoProcessor(args, rgb_path, depth_path)
+        processor = FoundationStereoProcessorOnnx(args, rgb_path, depth_path)
         processor.run()
 
         logger.info("Depth estimation completed successfully")

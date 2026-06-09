@@ -10,8 +10,13 @@ import copy
 import logging
 import os
 import random
-import tempfile 
+import tempfile
 import sys
+
+# Before pyrender (pulls in OpenGL): PyOpenGL reads PYOPENGL_PLATFORM on first GL import.
+# Docker sets this too; setdefault keeps local runs working without duplicating over Docker.
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
 sys.path.append('/customize_cuda/')
 sys.path.append('/customize_cuda/build')
 
@@ -40,20 +45,20 @@ from tqdm import tqdm
 import sys
 # Import CUDA common functions (now properly installed in site-packages)
 import common
-from ..utils.preprocessing import depth2xyzmap, toOpen3dCloud
 from .tool import (
     GL_CAM_TO_CV_CAM,
     MeshProcessor,
     PoseUtils,
-    set_seed
+    set_seed,
+    depth2xyzmap,
+    toOpen3dCloud
 )
 
 BAD_DEPTH = 99
 BAD_COLOR = 128
 to8b = lambda x : (255*np.clip(x,0,1)).astype(np.uint8)
-os.environ['PYOPENGL_PLATFORM'] = 'egl'
-os.environ["DISPLAY"] = ":0"
 
+logger = logging.getLogger(__name__)
 
 def normalize(v):
     """Normalize a vector."""
@@ -114,7 +119,7 @@ class ModelRendererOffscreen:
     If off-screen mode, set os.environ["PYOPENGL_PLATFORM"] at very top of the code
     """
 
-    def __init__(self, model_paths, cam_K, H, W, zfar=2):
+    def __init__(self, model_paths, cam_K, H, W, zfar=2, logger: logging.Logger = logger):
         """Initialize offscreen renderer.
         
         Args:
@@ -125,6 +130,7 @@ class ModelRendererOffscreen:
             zfar: Far clipping plane
         """
         self.K = cam_K
+        self.logger = logger
         self.scene = pyrender.Scene(
             ambient_light=[1., 1., 1.],
             bg_color=[0, 0, 0]
@@ -141,7 +147,7 @@ class ModelRendererOffscreen:
         self.mesh_nodes = []
 
         for model_path in model_paths:
-            print('model_path', model_path)
+            logging.info(f'model_path {model_path}')
             obj_mesh = trimesh.load(model_path)
             mesh = pyrender.Mesh.from_trimesh(obj_mesh)
             # Object pose parent is cam
@@ -232,7 +238,7 @@ def preprocess_data(rgbs, depths, masks, normal_maps, poses, sc_factor, translat
 
     return rgbs, depths, masks, normal_maps, poses
 
-def build_texture_from_images(mesh, reader, poses, Height, Width, K, sc_factor, far, tex_res,alpha=1.5,beta=0.5,adjust_brightness=True,debug_dir=None):
+def build_texture_from_images(mesh, reader, poses, Height, Width, K, sc_factor, far, tex_res, debug_dir=None, config=None,logger: logging.Logger = logger):
 
     frame_ids = torch.arange(len(reader)).long().cuda()
     c2w_array = torch.tensor(poses, dtype=torch.float).cuda()
@@ -249,79 +255,194 @@ def build_texture_from_images(mesh, reader, poses, Height, Width, K, sc_factor, 
     H, W = tex_image.shape[:2]
     uvs_tex = (new_trimesh.visual.uv*np.array([W-1,H-1]).reshape(1,2))    #(n_V,2)
 
-    H,W = tex_image.shape[:2]
-    uvs_tex = (new_trimesh.visual.uv*np.array([W-1,H-1]).reshape(1,2))    #(n_V,2) (63330, 2)
-
     renderer = ModelRendererOffscreen([], cam_K=K, H=Height, W=Width, zfar=far*sc_factor)
     renderer.add_mesh(new_trimesh)
 
-    print(f"Texture: Initial LOOP FOR storing angles for each face")
-    all_tri_list= {key: [] for key in range(new_trimesh.triangles.shape[0])}
-    def preprocess(rgb,mask,adjust_brightness=True,alpha=1.5,beta=0.5):
+    logger.info(f"Texture: Initial LOOP FOR storing angles for each face {new_trimesh.triangles.shape[0]}")
+
+    def preprocess(rgb,mask):
         rgb = np.where(mask[..., None] == 0, BAD_COLOR, rgb)
         mask = mask[..., None]
         rgb = rgb[...,::-1]
-        if adjust_brightness:
-            rgb = cv2.convertScaleAbs(rgb, alpha=alpha, beta=beta)
         return rgb,mask
+
+    # all_tri_dict: record the viewing angle and ray color for each triangle from each covered frame
+    # {key: [(frame id, viewing angle, ray color)]}
+    all_tri_dict = {key: [] for key in range(new_trimesh.triangles.shape[0])}
+
+    frame_cache = {}
+
     for i in tqdm(range(len(reader))):
-        cvcam_in_ob = tf[i]@np.linalg.inv(GL_CAM_TO_CV_CAM)
-        color, render_depth = renderer.render([np.linalg.inv(cvcam_in_ob)])
-        xyz_map = depth2xyzmap(render_depth, K)
-        rgb,mask = preprocess(reader.get_color(i),reader.get_mask(i),adjust_brightness,alpha,beta)
-        mask = mask.reshape(Height, Width).astype(bool)
-        valid = (render_depth.reshape(Height, Width)>=0.1*sc_factor) & (mask)
-        pts = xyz_map[valid].reshape(-1,3)
-        pts = transform_pts(pts, cvcam_in_ob)
-        ray_colors = rgb[valid].reshape(-1,3)
-        # locations, distance, index_tri = trimesh.proximity.closest_point(new_trimesh, pts)
-        _, index_tri, locations = igl.signed_distance(pts, new_trimesh.vertices, new_trimesh.faces)
-        normals = new_trimesh.face_normals[index_tri]
-        for ind_tri, each_tri in enumerate(index_tri):
-            rays_o = np.zeros(3)
-            pts = transform_pts(rays_o, cvcam_in_ob) #transform to world space
-            rays_d = locations[ind_tri]-pts
-            rays_d /= np.linalg.norm(rays_d) #unit direction vector
-            dot_product = np.dot(-rays_d, normals[ind_tri])
-            angle_radians = np.arccos(dot_product)
-            angle_degrees = np.degrees(angle_radians)
-            all_tri_list[each_tri].extend([[i,angle_degrees]])
-
-
-    _CHOOSE_TOP_N = 1
-    all_triangles_dict={}
-    for k,v in all_tri_list.items():
-        if(v):
-            v.sort(key=lambda x: x[1])
-            tep = [i[0] for i in v[:_CHOOSE_TOP_N]]
-            all_triangles_dict[k]=set(list(tep))
-
-    all_tri_visited = {key: 0 for key in range(new_trimesh.triangles.shape[0])}
-    
-    print(f"Texture: Texture map computation ")
-    for i in tqdm(range(len(reader))):
-        # print(f'project train_images {i}/{len(rgbs_raw)}')
-
-        ############# Raterization
         cvcam_in_ob = tf[i]@np.linalg.inv(GL_CAM_TO_CV_CAM)
         _, render_depth = renderer.render([np.linalg.inv(cvcam_in_ob)])
-
         xyz_map = depth2xyzmap(render_depth, K)
-        rgb,mask = preprocess(reader.get_color(i),reader.get_mask(i),adjust_brightness,alpha,beta)
-        mask = mask.reshape(Height,Width).astype(bool)
-        valid = (render_depth.reshape(Height,Width)>=0.1*sc_factor) & (mask)
+        rgb, mask = preprocess(reader.get_color(i), reader.get_mask(i))
+        mask = mask.reshape(Height, Width).astype(bool)
+        valid = (render_depth.reshape(Height, Width)>=0.1 * sc_factor) & (mask)
         pts = xyz_map[valid].reshape(-1,3)
         pts = transform_pts(pts, cvcam_in_ob)
-        ray_colors = rgb[valid].reshape(-1, 3)
+        ray_colors = rgb[valid].reshape(-1,3).astype(np.float32)
         # locations, distance, index_tri = trimesh.proximity.closest_point(new_trimesh, pts)
+        _, index_tri, locations,_ = igl.signed_distance(pts, new_trimesh.vertices, new_trimesh.faces)
+        normals = new_trimesh.face_normals[index_tri]
 
-        _, index_tri, locations = igl.signed_distance(pts, new_trimesh.vertices, new_trimesh.faces)
+        frame_cache[i] = {
+            'index_tri': index_tri,
+            'locations': locations,
+            'ray_colors': ray_colors
+        }
+        
+        # Vectorized angle calculation instead of Python loop
+        if len(locations) > 0:
+            # Camera position in world coordinates (vectorized)
+            rays_o = np.zeros(3)
+            camera_pos = transform_pts(rays_o, cvcam_in_ob)  # (3,)
+            
+            # Vectorized ray direction calculation
+            rays_d = locations - camera_pos  # (N, 3) - (3,) = (N, 3)
+            rays_d_norm = np.linalg.norm(rays_d, axis=1, keepdims=True)  # (N, 1)
+            rays_d = rays_d / (rays_d_norm + 1e-8)  # (N, 3) normalized, avoid division by zero
+            
+            # Vectorized dot product calculation
+            dot_products = np.sum(-rays_d * normals, axis=1)  # (N,)
+            dot_products = np.clip(dot_products, -1.0, 1.0)  # Clamp to valid range for arccos
+            
+            # Vectorized angle calculation
+            angle_radians = np.arccos(dot_products)  # (N,)
+            angle_degrees = np.degrees(angle_radians)  # (N,)
+
+            # Update all_tri_dict
+            for each_tri, angle_deg, ray_color in zip(index_tri, angle_degrees, ray_colors):
+                all_tri_dict[each_tri].append((i, angle_deg, ray_color))
+
+    # if config for color fusion from multi-view images is provided, use it, otherwise use default values
+    if config is not None:
+        _ADJUST_BRIGHTNESS = config.get("adjust_brightness", True)
+        if _ADJUST_BRIGHTNESS:
+            _ALPHA = config.get("alpha", 1.5)
+            _BETA = config.get("beta", 0.5)
+        _CHOOSE_TOP_N  = config.get("choose_top_n", 1)              # number of top-viewing angle triangles to be used for texture mapping
+        _MAX_ANGLE = config.get("max_angle", 90)                    # maximum viewing angle to be used for texture mapping
+        _FRAME_COLOR_REMAP = config.get("frame_color_remap", False) # whether to remap the frame color to the average color of the top-viewing angle triangles
+        _CHOOSE_TOP_N_REMAP = config.get("choose_top_n_remap", 10) # number of top-viewing angle triangles to be used for color remapping
+        save_remap_results_to_path = config.get("save_remap_results_to_path", None) 
+        if _FRAME_COLOR_REMAP:
+            logger.info(f"Color fusion from multi-view images: _CHOOSE_TOP_N: {_CHOOSE_TOP_N}, _MAX_ANGLE: {_MAX_ANGLE}, _FRAME_COLOR_REMAP: {_FRAME_COLOR_REMAP}")
+        else:
+            logger.info(f"Use color from a single frame for each vertex")
+    else:
+        _ADJUST_BRIGHTNESS = False
+        _CHOOSE_TOP_N = 1
+        _MAX_ANGLE = 90 # maximum viewing angle (vertical to the surface) to be used for texture mapping
+        _FRAME_COLOR_REMAP = False
+        save_remap_results_to_path = None
+        _CHOOSE_TOP_N_REMAP = 1
+        logger.info(f"No color fusion config provided, use color from a single frame for each vertex")
+    
+    assert _CHOOSE_TOP_N >= 1 and _MAX_ANGLE <= 90, f"Invalid color fusion config: _CHOOSE_TOP_N: {_CHOOSE_TOP_N}, _MAX_ANGLE: {_MAX_ANGLE}"
+    
+    all_tri_weighted_frame_dict = {} # store the frame ids where we collect the colors for each triangle
+    all_tri_weighted_color_dict = {} # store the collected colors from different frames that used to compute the weighted color for each triangle 
+    all_frame_tri_dict = {key: [] for key in range(len(reader))} # store the observed triangle ids for each frame
+    all_tri_frame_dict = {} # store the frame ids where we collect the colors for each triangle
+    all_tri_color_dict = {} # store the collected colors from different frames that used to compute the weighted color for each triangle
+    count = []
+    for tri_id, tri_info_list in all_tri_dict.items():
+        # tri_info_list: [(frame id, viewing angle, ray color), ...]
+        if(tri_info_list):
+            # sort the triangles by topviewing angle
+            tri_info_list.sort(key=lambda x: x[1])
+            # remove duplicates
+            frame_id_set = []
+            tri_info_set = []
+            for tri_info in tri_info_list:
+                frame_id = tri_info[0]
+                if frame_id not in frame_id_set:
+                    frame_id_set.append(frame_id)
+                    tri_info_set.append(tri_info)
+            assert len(frame_id_set) >= 1
+            select_frame_ids = []
+            select_colors = []
+            select_frame_ids_remap = []
+            select_colors_remap = []
+            for i, tri_info in enumerate(tri_info_set[:_CHOOSE_TOP_N]):
+                frame_id, viewing_angle, ray_color = tri_info
+                if i > 0 and viewing_angle > _MAX_ANGLE:
+                    break
+                all_frame_tri_dict[frame_id].append(tri_id)
+                if i < _CHOOSE_TOP_N:
+                    select_frame_ids.append(frame_id)
+                    select_colors.append(ray_color)
+                if i< _CHOOSE_TOP_N_REMAP:
+                    select_frame_ids_remap.append(frame_id)
+                    select_colors_remap.append(ray_color)
+            all_tri_weighted_frame_dict[tri_id] = select_frame_ids_remap
+            all_tri_weighted_color_dict[tri_id] = select_colors_remap
+            all_tri_frame_dict[tri_id] = select_frame_ids
+            all_tri_color_dict[tri_id] = select_colors
+            count.append(len(all_tri_weighted_frame_dict[tri_id]))
+    logger.info(f"Triangles observed rate by each frame: {sum(count)/len(count)/len(reader):.2f}")
+
+    weighted_color_each_frame = {key: np.zeros(3) for key in range(len(reader))} # store the weighted colors for each frame
+    original_color_each_frame = {key: np.zeros(3) for key in range(len(reader))} # store the original colors for each frame
+
+    for frame_id, tri_ids in all_frame_tri_dict.items():
+        weighted_colors = []
+        original_colors = []
+        for i in tri_ids:
+            ind = all_tri_frame_dict[i].index(frame_id)
+            if ind==-1:
+                continue
+            if ind<=_CHOOSE_TOP_N:
+                original_colors.append(all_tri_color_dict[i][ind])
+            if ind<=_CHOOSE_TOP_N_REMAP:
+                weighted_colors.append(np.mean(all_tri_weighted_color_dict[i], axis=0))
+        if len(weighted_colors) > 0:
+            weighted_color_each_frame[frame_id] = np.mean(weighted_colors, axis=0)
+            original_color_each_frame[frame_id] = np.mean(original_colors, axis=0)
+
+    logger.info(f"Texture: Texture map computation ")
+
+    if _FRAME_COLOR_REMAP and save_remap_results_to_path is not None:
+        colors = []
+        remap_colors = []
+
+    for i in tqdm(range(len(reader))):
+        index_tri = frame_cache[i]['index_tri']
+        locations = frame_cache[i]['locations']
+        ray_colors = frame_cache[i]['ray_colors']
+
+        if _FRAME_COLOR_REMAP:
+            ray_colors = ray_colors.astype(np.float32)
+
+            mean_lum = 0.299 * original_color_each_frame[i][0] \
+                    + 0.587 * original_color_each_frame[i][1] \
+                    + 0.114 * original_color_each_frame[i][2]
+            target_lum = 0.299 * weighted_color_each_frame[i][0] \
+                    + 0.587 * weighted_color_each_frame[i][1] \
+                    + 0.114 * weighted_color_each_frame[i][2]
+
+            # mean_lum = original_color_each_frame[i]
+            # target_lum = weighted_color_each_frame[i]
+
+            scale = target_lum / (mean_lum + 1e-8)
+            ray_colors = np.clip(ray_colors * scale, 0, 255).astype(np.uint8)
+
+            if save_remap_results_to_path is not None:
+                color = reader.get_color(i)
+                mask = reader.get_mask(i)
+                color, _ = preprocess(color, mask)
+                color[mask==0] = 0
+                colors.append(color)
+                color = color.copy().astype(np.float32)
+                color *= scale
+                color = np.clip(color, 0, 255).astype(np.uint8)
+                remap_colors.append(color)
 
         bool_weights = torch.zeros(len(locations)).cuda()
         for jj, trtind__ in enumerate(index_tri):
-            if(i in all_triangles_dict[trtind__] ):
-                bool_weights[jj]=1
-                all_tri_visited[trtind__]=1
+            if(i in all_tri_weighted_frame_dict[trtind__] ):
+                bool_weights[jj]=1 # 1 means the ray is from the representative frame
 
         ############## CUDA
         uvs = torch.zeros((len(locations),2)).cuda().float()
@@ -349,12 +470,23 @@ def build_texture_from_images(mesh, reader, poses, Height, Width, K, sc_factor, 
     tex_image = tex_image.data.cpu().numpy()
     # Handle non-finite values (NaN or inf) before clipping and conversion
     tex_image = np.nan_to_num(tex_image, nan=0.0, posinf=255.0, neginf=0.0)
+    if _ADJUST_BRIGHTNESS:
+        tex_image = cv2.convertScaleAbs(tex_image, alpha=_ALPHA, beta=_BETA)
     tex_image = np.clip(tex_image,0,255).astype(np.uint8)
     tex_image = tex_image[::-1].copy()      # UV origin is bottom-left
 
     new_texture = texture_map_interpolation(tex_image)
 
     new_trimesh.visual = trimesh.visual.texture.TextureVisuals(uv=new_trimesh.visual.uv, image=Image.fromarray(new_texture))
+    
+    if _FRAME_COLOR_REMAP and save_remap_results_to_path is not None:
+        all_pairs = [np.concatenate((original, remapped), axis=1) for original, remapped in zip(colors, remap_colors)]
+        final_image_grid = np.concatenate(all_pairs, axis=0)
+        try:
+            Image.fromarray(final_image_grid).save(save_remap_results_to_path)
+        except Exception as e:
+            logger.info(f"Warning: Failed to save color remapping results: {e}")
+
     return new_trimesh
 
 
@@ -1015,7 +1147,6 @@ class OctreeManager:
 
         ray_index, rays_pid, depth_in_out = kaolin.render.spc.unbatched_raytrace(octree, point_hierarchies, pyramids_0, exsum, rays_o, rays_d, level=level, return_depth=True, with_exit=True)
         if ray_index.size()[0] == 0:
-            print("[WARNING] batch has 0 intersections!!")
             ray_depths_in_out = torch.zeros((rays_o.shape[0],1,2))
             rays_pid = -torch.ones_like(rays_o[:, :1])
             rays_near = torch.zeros_like(rays_o[:, :1])
@@ -1117,11 +1248,12 @@ class NeRFSmall(nn.Module):
         return outputs
 
 class NerfRunner:
-    def __init__(self,cfg,reader,poses,K,normal_maps=None,_run=None,occ_masks=None,build_octree_pcd=None):
+    def __init__(self,cfg,reader,poses,K,normal_maps=None,_run=None,occ_masks=None,build_octree_pcd=None,logger: logging.Logger = logger):
         set_seed(0)
         self.cfg = cfg
         self.cfg['save_dir'] = os.path.expandvars(self.cfg['save_dir'])
         self.cfg['tv_loss_weight'] = eval(str(self.cfg['tv_loss_weight']))
+        self.logger = logger
         self._run = _run
         self.reader = reader
         self.image_loader = ImageLoader(reader, batch_size=cfg['batch_size'],sc_factor=cfg['sc_factor'])
@@ -1156,12 +1288,10 @@ class NerfRunner:
         self.create_nerf()
         self.create_optimizer()
 
-        self.amp_scaler = torch.cuda.amp.GradScaler(enabled=self.cfg['amp'])
+        self.amp_scaler = torch.amp.GradScaler("cuda", enabled=self.cfg['amp'])
 
         self.global_step = 0
 
-        print("sc_factor",self.cfg['sc_factor'])
-        print("translation",self.cfg['translation'])
 
         self.c2w_array = torch.tensor(poses).float().cuda()
 
@@ -1206,7 +1336,7 @@ class NerfRunner:
         use_batching = not self.cfg['no_batching']
         if use_batching:
             if self.cfg['use_mask']:
-                print("Using mask")
+                self.logger.info("Using mask")
                 rays_ = []
                 for i_mask in range(len(self.masks)):
                     rays = self.make_frame_rays(i_mask)
@@ -1226,7 +1356,7 @@ class NerfRunner:
                 ids = ids[:, np.newaxis, np.newaxis, np.newaxis]
                 ids = np.tile(ids, [1, rays.shape[1], rays.shape[2], 1])
                 rays = np.concatenate([rays, ids], -1)  # [N, H, W, 9]
-                print('rays',rays.shape)
+                self.logger.info(f'rays {rays.shape}')
                 rays_ = []
                 D = rays.shape[-1]
                 for i_pose in range(len(self.poses)):
@@ -1236,14 +1366,14 @@ class NerfRunner:
                 rays = np.concatenate(rays_,axis=0)
 
         if self.cfg['denoise_depth_use_octree_cloud']:
-            logging.info("denoise cloud")
+            self.logger.info("denoise cloud")
             mask = (rays[:,self.ray_mask_slice]>0) & (rays[:,self.ray_depth_slice]<=self.cfg['far']*self.cfg['sc_factor'])
             rays_dir = rays[mask][:,self.ray_dir_slice]
             rays_depth = rays[mask][:,self.ray_depth_slice]
             pts3d = rays_dir*rays_depth.reshape(-1,1)
             frame_ids = rays[mask][:,self.ray_frame_id_slice].astype(int)
             pts3d_w = (self.all_poses[frame_ids]@to_homo(pts3d)[...,None])[:,:3,0]
-            logging.info(f"Denoising rays based on octree cloud")
+            self.logger.info(f"Denoising rays based on octree cloud")
 
             kdtree = cKDTree(self.build_octree_pts)
             dists,indices = kdtree.query(pts3d_w,k=1,workers=-1)
@@ -1252,13 +1382,13 @@ class NerfRunner:
             rays[bad_ids,self.ray_depth_slice] = BAD_DEPTH*self.cfg['sc_factor']
             rays[bad_ids, self.ray_type_slice] = 1
             rays = rays[rays[:,self.ray_type_slice]==0]
-            logging.info(f"bad_mask#={bad_mask.sum()}")
+            self.logger.info(f"bad_mask#={bad_mask.sum()}")
 
         if use_batching:
             rays = torch.tensor(rays, dtype=torch.float).cuda()
 
         self.rays = rays
-        print("rays", rays.shape, self.rays.device)
+        self.logger.info(f"rays {rays.shape} {self.rays.device}")
         
         self.data_loader = DataLoader(rays=self.rays, batch_size=self.cfg['N_rand'])
         #delete images
@@ -1304,10 +1434,10 @@ class NerfRunner:
         # Create pose array
         pose_array = None
         if not self.cfg['optimize_poses']:
-            logging.info("Not optimizing poses")
+            self.logger.info("Not optimizing poses")
             pose_array = GlobalPoseArray(num_training_frames,max_trans=self.cfg['max_trans']*self.cfg['sc_factor'],max_rot=self.cfg['max_rot']).to(device)
         else:
-            logging.info("Optimizing poses")
+            self.logger.info("Optimizing poses")
             pose_array = PoseArray(num_training_frames,max_trans=self.cfg['max_trans']*self.cfg['sc_factor'],max_rot=self.cfg['max_rot']).to(device)
         models['pose_array'] = pose_array
         self.models = models
@@ -1473,7 +1603,7 @@ class NerfRunner:
         self.best_loss = np.inf
 
         if not self.cfg['no_batching']:
-            print("Using mask")
+            self.logger.info("Using mask")
             rays_ = []
             for i_mask in range(prev_n_image, len(self.masks)):
                 rays = self.make_frame_rays(i_mask)
@@ -1481,14 +1611,14 @@ class NerfRunner:
             rays = np.concatenate(rays_, axis=0)
 
             if self.cfg['denoise_depth_use_octree_cloud']:
-                logging.info("denoise cloud")
+                self.logger.info("denoise cloud")
                 mask = (rays[:,self.ray_mask_slice]>0) & (rays[:,self.ray_depth_slice]<=self.cfg['far']*self.cfg['sc_factor'])
                 rays_dir = rays[mask][:,self.ray_dir_slice]
                 rays_depth = rays[mask][:,self.ray_depth_slice]
                 pts3d = rays_dir*rays_depth.reshape(-1,1)
                 frame_ids = rays[mask][:,self.ray_frame_id_slice].astype(int)
                 pts3d_w = (self.poses[frame_ids]@to_homo(pts3d)[...,None])[:,:3,0]
-                logging.info(f"Denoising rays based on octree cloud")
+                self.logger.info(f"Denoising rays based on octree cloud")
 
                 kdtree = cKDTree(self.build_octree_pts)
                 dists,indices = kdtree.query(pts3d_w,k=1,workers=-1)
@@ -1497,7 +1627,7 @@ class NerfRunner:
                 rays[bad_ids,self.ray_depth_slice] = BAD_DEPTH*self.cfg['sc_factor']
                 rays[bad_ids, self.ray_type_slice] = 1
                 rays = rays[rays[:,self.ray_type_slice]==0]
-                logging.info(f"bad_mask#={bad_mask.sum()}")
+                self.logger.info(f"bad_mask#={bad_mask.sum()}")
 
             rays = torch.tensor(rays, device=self.rays.device, dtype=torch.float)
             self.rays = torch.cat((self.rays,rays), dim=0)
@@ -1521,7 +1651,7 @@ class NerfRunner:
         #################### Dilate
         dilate_radius = int(np.ceil(self.cfg['octree_dilate_size']/self.cfg['octree_smallest_voxel_size']))
         dilate_radius = max(1, dilate_radius)
-        logging.info(f"Octree voxel dilate_radius:{dilate_radius}")
+        self.logger.info(f"Octree voxel dilate_radius:{dilate_radius}")
         shifts = []
         for dx in [-1,0,1]:
             for dy in [-1,0,1]:
@@ -1569,7 +1699,7 @@ class NerfRunner:
 
         param_groups = [{'name':'basic', 'params':params, 'lr':self.cfg['lrate']}]
         if self.models['pose_array'] is not None:
-            print('optimize poses')
+            self.logger.info('optimize poses')
             param_groups.append({'name':'pose_array', 'params':self.models['pose_array'].parameters(), 'lr':self.cfg['lrate_pose']})
 
         self.optimizer = torch.optim.Adam(param_groups, betas=(0.9, 0.999),weight_decay=0,eps=1e-15)
@@ -1578,9 +1708,9 @@ class NerfRunner:
 
 
     def load_weights(self,ckpt_path):
-        print('Reloading from', ckpt_path)
+        self.logger.info(f'Reloading from {ckpt_path}')
         ckpt = torch.load(ckpt_path)
-        print("ckpt keys: ",ckpt.keys())
+        self.logger.info(f"ckpt keys: {ckpt.keys()}")
         self.models['model'].load_state_dict(ckpt['model'])
         if self.models['model_fine'] is not None:
             self.models['model_fine'].load_state_dict(ckpt['model_fine'])
@@ -1617,7 +1747,7 @@ class NerfRunner:
             data['octree'] = self.octree_m.octree
         dir = out_file
         torch.save(data,dir)
-        print('Saved checkpoints at', dir)
+        self.logger.info(f'Saved checkpoints at {dir}')
         if self._run is not None:
             self._run.add_artifact(dir)
         dir1 = copy.deepcopy(dir)
@@ -1709,7 +1839,7 @@ class NerfRunner:
         target_mask = batch[:,self.ray_mask_slice].bool().reshape(-1)
         frame_ids = batch[:,self.ray_frame_id_slice]
 
-        rgb, extras = self.render(rays=batch, ray_ids=self.data_loader.batch_ray_ids, frame_ids=frame_ids,depth=target_d,lindisp=False,perturb=True,raw_noise_std=self.cfg['raw_noise_std'], near=batch[:,self.ray_near_slice], far=batch[:,self.ray_far_slice], get_normals=False)
+        rgb, extras = self.render(rays=batch, ray_ids=self.data_loader.batch_ray_ids, frame_ids=frame_ids,depth=target_d,lindisp=False,perturb=True,raw_noise_std=self.cfg['raw_noise_std'], near=batch[:,self.ray_near_slice], far=batch[:,self.ray_far_slice], get_normals=self.cfg['eikonal_weight']>0)
 
         valid_samples = extras['valid_samples']   #(N_ray,N_samples)
         z_vals = extras['z_vals']  # [N_rand, N_samples + N_importance]
@@ -1841,7 +1971,7 @@ class NerfRunner:
             for k in metrics.keys():
                 msg += f"{k}: {metrics[k]:.7f}, "
             msg += "\n"
-            logging.info(msg)
+            self.logger.info(msg)
 
         if self._run is not None:
             for k in metrics.keys():
@@ -1889,9 +2019,9 @@ class NerfRunner:
             self.train_loop(batch.cuda())
             self.global_step += 1
             if iter%(self.N_iters//10)==0:
-                logging.info(f'train progress {iter}/{self.N_iters}')
+                self.logger.info(f'train progress {iter}/{self.N_iters}')
             if (self.data_loader.pos >= len(self.data_loader.ids)) and (len(self.reader)>self.cfg['batch_size']):
-                print("Loading next batch images")
+                self.logger.info("Loading next batch images")
                 item = next(self.image_loader)
                 self.get_ray_loader(*item)
         self.save_weights(out_file=os.path.join(self.cfg['save_dir'], f'model_latest.pth'), models=self.models)
@@ -2318,7 +2448,7 @@ class NerfRunner:
         else:
             valid = torch.ones(len(query_pts), dtype=bool).cuda()
 
-        logging.info(f'query_pts:{query_pts.shape}, valid:{valid.sum()}')
+        self.logger.info(f'query_pts:{query_pts.shape}, valid:{valid.sum()}')
         flat = query_pts[valid]
 
         sigma = []
@@ -2333,15 +2463,15 @@ class NerfRunner:
         sigma_[valid] = sigma.reshape(-1)
         sigma = sigma_.reshape(N,N,N).data.cpu().numpy()
 
-        logging.info('Running Marching Cubes')
+        self.logger.info('Running Marching Cubes')
         from skimage import measure
         try:
             vertices, triangles, normals, values = measure.marching_cubes(sigma, isolevel)
         except Exception as e:
-            logging.info(f"ERROR Marching Cubes {e}")
+            self.logger.info(f"ERROR Marching Cubes {e}")
             return None
 
-        logging.info(f'done V:{vertices.shape}, F:{triangles.shape}')
+        self.logger.info(f'done V:{vertices.shape}, F:{triangles.shape}')
 
         # Rescale and translate
         voxel_size_ndc = np.array([tx[-1] - tx[0], ty[-1] - ty[0], tz[-1] - tz[0]]) / np.array([[tx.shape[0] - 1, ty.shape[0] - 1, tz.shape[0] - 1]])

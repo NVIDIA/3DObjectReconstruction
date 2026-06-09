@@ -18,7 +18,7 @@ import torch
 import trimesh
 from sklearn.cluster import DBSCAN
 
-from ..utils.preprocessing import toOpen3dCloud, depth2xyzmap
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,38 @@ GL_CAM_TO_CV_CAM = np.array([
     [0, 0, -1, 0],
     [0, 0, 0, 1]
 ])
+def depth2xyzmap(depth:np.ndarray, K, uvs:np.ndarray=None, zmin=0.1):
+    invalid_mask = (depth < zmin)
+    H, W = depth.shape[:2]
+    if uvs is None:
+        vs, us = np.meshgrid(np.arange(0, H), np.arange(0, W), sparse=False, indexing='ij')
+        vs = vs.reshape(-1)
+        us = us.reshape(-1)
+    else:
+        uvs = uvs.round().astype(int)
+        us = uvs[:, 0]
+        vs = uvs[:, 1]
+    zs = depth[vs, us]
+    xs = (us - K[0, 2]) * zs / K[0, 0]
+    ys = (vs - K[1, 2]) * zs / K[1, 1]
+    pts = np.stack((xs.reshape(-1), ys.reshape(-1), zs.reshape(-1)), 1)
+    xyz_map = np.zeros((H, W, 3), dtype=np.float32)
+    xyz_map[vs, us] = pts
+    if invalid_mask.any():
+        xyz_map[invalid_mask] = 0
+    return xyz_map
 
+def toOpen3dCloud(points, colors=None, normals=None):
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(points.astype(np.float64))
+    
+    if colors is not None:
+        if colors.max() > 1:
+            colors = colors / 255.0
+        cloud.colors = o3d.utility.Vector3dVector(colors.astype(np.float64))
+    if normals is not None:
+        cloud.normals = o3d.utility.Vector3dVector(normals.astype(np.float64))
+    return cloud
 
 class PointCloudProcessor:
     """Handles point cloud processing operations."""
@@ -317,7 +348,7 @@ class MeshProcessor:
     def smooth_mesh(
         mesh: trimesh.Trimesh,
         cfg_nerf: Dict[str, Any],
-        debug_dir: Union[str, Path]
+        debug_dir: Union[str, Path],logger: logging.Logger = logger
     ) -> trimesh.Trimesh:
         """
         Apply smoothing to a mesh based on configuration.
@@ -425,7 +456,7 @@ class TensorUtils:
     def ensure_tensor_type(
         tensor: torch.Tensor,
         target_dtype: torch.dtype = torch.float32,
-        name: str = "tensor"
+        name: str = "tensor",logger: logging.Logger = logger
     ) -> torch.Tensor:
         """
         Ensure tensor is of specified type.
@@ -456,7 +487,7 @@ class TensorUtils:
     @staticmethod
     def ensure_tensor_types(
         tensors_dict: Dict[str, torch.Tensor],
-        dtypes_dict: Dict[str, torch.dtype]
+        dtypes_dict: Dict[str, torch.dtype],logger: logging.Logger = logger
     ) -> Dict[str, torch.Tensor]:
         """
         Ensure multiple tensors have correct types.
@@ -482,7 +513,7 @@ class TensorUtils:
         for name, tensor in tensors_dict.items():
             if name in dtypes_dict:
                 result[name] = TensorUtils.ensure_tensor_type(
-                    tensor, dtypes_dict[name], name
+                    tensor, dtypes_dict[name], name, logger=logger
                 )
             else:
                 result[name] = tensor

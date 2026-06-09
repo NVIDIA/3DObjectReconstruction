@@ -4,7 +4,7 @@ workdir: /workspace/3d-object-reconstruction/data/output/retail_item/     # Path
 downscale: 1.0                                                         # not used for now since we specify image downscale for each part.
 # Camera intrinsic parameters in 3x3 matrix format
 camera_config:
-  step: 4                                                             
+  step: 1                                                             
   intrinsic:                                                         # Camera(Qoocam) intrinsic matrix, change depending on your camera - check camera's config
   - 3079.6  # fx
   - 0       
@@ -19,7 +19,7 @@ camera_config:
 # BundleTrack configuration for camera pose estimation and tracking
 bundletrack:
   debug_dir: /workspace/3d-object-reconstruction/data/output/retail_item/ # Directory for debug outputs
-  SPDLOG: 1                                                            # Logging level
+  SPDLOG: 0                                                            # Logging level
   USE_GRAY: false                                                      
   port: '5555'                                                         
   nerf_port: '9999'                                                    
@@ -56,10 +56,12 @@ bundletrack:
 
   # Bundle adjustment parameters
   bundle:
+    optimizer_type: theseus                                    # Theseus is the only supported optimizer in the commercial build; bundlefusion removed.
     num_iter_outter: 7                                               
     num_iter_inner: 5                                               
     window_size: 5                                                   #window size for non-keyframe saving
     max_BA_frames: 10                                                #max frames
+    clean_keyframes: false                                            #if clean keyframes out of BA window size - set true when memory limitations
     subset_selection_method: normal_orientation_nearest               
     depth_association_radius: 5                                       
     non_neighbor_max_rot: 90                                          #maximum rotation difference between two frames
@@ -110,7 +112,21 @@ bundletrack:
     max_view_normal_angle: 180                                      
     min_match_with_ref: 5                                          # Minimum matches with reference
     resize: 800                                                     
-    rematch_after_nerf: false                                      
+    rematch_after_nerf: false
+    min_correspondences: 1000                                             #minimum number of correspondences of RoMA, in case of textureless object
+    max_correspondences: 10000                                            #maximum number of correspondences of RoMA
+
+  # Theseus optimizer parameters
+  theseus:
+    num_iter_outter: 3                                              # Outer iterations: sampling correspondences for each outer iteration
+    num_iter_inner: 10                                              # Inner iterations: optimizing poses with step size for each inner iteration
+    num_sampled_corres: 10000                                       # Maximum number of correspondences to use during optimization to avoid OOM
+    use_cpu: false
+    w_sparse: 1                                                     # Weight of corres-to-corres 3D distance loss for correspondence pairs
+    w_dense: 1                                                      # Weight of point-to-plane loss for correspondence pairs
+    robust_delta: 0.005                                             # Delta parameter for Huber robust loss
+    step_size: 0.1                                                  # Step size for pose optimization for each inner iteration
+    damping: 0.1                                        
 
   # RANSAC parameters for robust estimation not in use?
   ransac:
@@ -151,10 +167,13 @@ bundletrack:
     max_weight: 100                                              # Maximum TSDF weight
 
 # Foundation Stereo parameters for depth estimation
-foundation_stereo:
-  pth_path: /workspace/3d-object-reconstruction/data/weights/foundationstereo/model_best_bp2.pth    
-  cfg_path: /workspace/3d-object-reconstruction/data/weights/foundationstereo/cfg.yaml              
-  dinov2_path: /workspace/3d-object-reconstruction/data/weights/roma/dinov2_vitl14_pretrain.pth    
+foundation_stereo:                
+  dinov2_path: /workspace/3d-object-reconstruction/data/weights/roma/dinov2_vitl14_pretrain.pth
+  onnx_path: /workspace/3d-object-reconstruction/data/weights/foundationstereo/deployable_foundationstereo_small.onnx
+  onnx_inference: true                                       #enable onnx commercial model inference; deprecated for commercial model
+  device: cuda                                                   #cuda or cpu, only influence onnx model
+  onnx_input_min: 300                                            #input size min for quality
+  onnx_input_max: 800                                            #input size max to avoid memory issue
   vit_size: vitl                                                 
   scale: 0.3                                                     # Image scale factor
   hiera: 0                                                       
@@ -285,7 +304,18 @@ texture_bake:
   downscale: 1.0                                              # Texture image scale
   min_resolution: 300                                        # Minimum resolution for texture baking
   texture_res: 2048                                           # Texture resolution
-
+  color_fusion:                                              # Fuse color from multiple views for better texture mapping
+    adjust_brightness: true                                  # Lighten the texture color for better visual effect
+    alpha: 1.5                                               # Alpha parameter for brightness adjustment
+    beta: 0.5                                                # Beta parameter for brightness adjustment
+    choose_top_n: 1                                         # Number of top-viewing angle triangles to be used for texture mapping    
+    max_angle: 90                                            # Maximum viewing angle of a pixel to be used for texture mapping
+    frame_color_remap:  false                                  # Whether to remap the frame color to the average color of the top-viewing angle triangles
+    choose_top_n_remap: 10
+    save_remap_results: false                                 # Whether to save the remap results for reference
+  export_usd: true
+  export_usdz: true                                        # Whether to export the USDZ file
+    
 # ROMA feature matching parameters
 roma:
   coarse_res: 560                                             # Coarse resolution

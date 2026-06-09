@@ -3,6 +3,12 @@ Command-line interface for NVIDIA 3D Object Reconstruction.
 
 This module provides the main entry point for the CLI tool.
 """
+import warnings
+
+# Suppress UserWarning from third-party libs (torchvision pretrained, Theseus optional deps, etc.)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 
 import argparse
 import logging
@@ -18,18 +24,44 @@ import torch
 from nvidia.objectreconstruction.networks import NVBundleSDF
 from nvidia.objectreconstruction.dataloader import ReconstructionDataLoader
 from nvidia.objectreconstruction.utils.structures import dataclass_to_dict
-from nvidia.objectreconstruction.networks.foundationstereo import run_depth_estimation
+from nvidia.objectreconstruction.networks.foundationstereo_onnx import run_depth_estimation_onnx
 from nvidia.objectreconstruction.networks.sam2infer import run_mask_extraction
-from nvidia.objectreconstruction.utils.preprocessing import setup_experiment_directory
+
+# Stdlib has no level between INFO (20) and WARNING (30); this fills that gap for pipeline steps.
+LOG_progress = 25
+logging.addLevelName(LOG_progress, "PROGRESS")
 
 
-def setup_logging(verbose: bool = False):
+def _logger_progress(self, msg, *args, **kwargs):
+    if self.isEnabledFor(LOG_progress):
+        self._log(LOG_progress, msg, args, **kwargs)
+
+
+logging.Logger.progress = _logger_progress
+
+
+def setup_logging(verbose: bool = False, debug: bool = False):
     """Setup logging configuration."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    if debug:
+        level = logging.DEBUG
+    elif verbose:
+        level = logging.INFO
+        
+    else:
+        level = LOG_progress
+
+    # Library modules (e.g. nvbundlesdf) may call basicConfig(level=INFO) at import time
+    # before this runs; basicConfig is a no-op then, so we must set levels explicitly.
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+    else:
+        root.setLevel(level)
+        for handler in root.handlers:
+            handler.setLevel(level)
 
 def validate_config_file(config_path: str) -> dict:
     """
@@ -121,9 +153,19 @@ Examples:
         help="Path to output directory for reconstruction results"
     )
     parser.add_argument(
-        "--verbose", "-v", 
+        "--verbose", "-v",
+        action="store_true",
+        help="Verbose logging (INFO: includes library INFO, not only pipeline steps)",
+    )
+    parser.add_argument(
+        "--stage", "-p",
+        action="store_true",
+        help="Pipeline steps only (custom stage level between INFO and WARNING)",
+    )
+    parser.add_argument(
+        "--debug", "-d", 
         action="store_true", 
-        help="Enable verbose logging"
+        help="Enable debug logging"
     )
     parser.add_argument(
         "--version", 
@@ -139,22 +181,22 @@ Examples:
         return e.code if e.code is not None else 1
     
     # Setup logging
-    setup_logging(args.verbose)
+    setup_logging(args.verbose, args.debug)
     logger = logging.getLogger(__name__)
     
     try:
         start_total = time.time()
-        logger.info("NVIDIA 3D Object Reconstruction CLI")
+        logger.progress("NVIDIA 3D Object Reconstruction CLI")
         
         # Validate inputs
-        logger.info("Validating configuration and inputs...")
+        logger.progress("Validating configuration and inputs...")
         config = validate_config_file(args.config)
         exp_path = validate_data_path(args.data_path)
         
         # Create output directory
         output_path = Path(args.output_path)
         os.makedirs(output_path, exist_ok=True)
-        logger.info(f"Output directory: {output_path}")
+        logger.progress(f"Output directory: {output_path}")
         
         # Setup configuration paths
         config['workdir'] = output_path
@@ -169,23 +211,27 @@ Examples:
         foundation_stereo_config = config['foundation_stereo']
         texture_config = config['texture_bake']
 
-        logger.info(f"Starting reconstruction pipeline for: {exp_path}")
+        logger.progress(f"Starting reconstruction pipeline for: {exp_path}")
 
         # Copy contents of input data path to output folder
-        logger.info("Copying input data to output folder...")
+        logger.progress("Copying input data to output folder...")
         for item in exp_path.iterdir():
+            if os.path.exists(output_path/item.name):
+                #avoid copying overwrite output
+                logger.progress(f"Output directory {output_path/item.name} already exists, skipping...")
+                continue
             if item.is_dir():
                 shutil.copytree(item, output_path / item.name, dirs_exist_ok=True)
             else:
                 shutil.copy2(item, output_path)
-        logger.info("Input data copied successfully")
+        logger.progress("Input data copied successfully")
 
         # Step 1: Mask extraction
-        logger.info("Step 1/4: Running mask extraction...")
+        logger.progress("Step 1/4: Running mask extraction...")
         try:
             start_mask = time.time()
-            run_mask_extraction(sam2_config, output_path, output_path / 'left', mask_path=output_path / 'masks')
-            logger.info("Mask extraction completed successfully")
+            run_mask_extraction(sam2_config, output_path, output_path / 'left', mask_path=output_path / 'masks',logger=logger)
+            logger.progress("Mask extraction completed successfully")
             time_mask = time.time() - start_mask
         except Exception as e:
             logger.error(f"Mask extraction failed: {e}")
@@ -193,20 +239,20 @@ Examples:
 
     
         # Step 2: Depth estimation
-        logger.info("Step 2/4: Running depth estimation...")
+        logger.progress("Step 2/4: Running depth estimation...")
         try:
             start_depth = time.time()
-            response = run_depth_estimation(foundation_stereo_config, output_path, output_path / 'left', depth_path=output_path / 'depth')
+            response = run_depth_estimation_onnx(foundation_stereo_config, output_path, output_path / 'left', depth_path=output_path / 'depth',logger=logger)
             if not response:
                 raise RuntimeError("Depth estimation failed")
-            logger.info("Depth estimation completed successfully")
+            logger.progress("Depth estimation completed successfully")
             time_depth = time.time() - start_depth
         except Exception as e:
             logger.error(f"Depth estimation failed: {e}")
             raise RuntimeError(f"Depth estimation step failed: {e}")
 
         # Step 3: Initialize tracker and datasets
-        logger.info("Step 3/4: Initializing reconstruction components...")
+        logger.progress("Step 3/4: Initializing reconstruction components...")
         try:
             start_pipeline = time.time()
             tracker = NVBundleSDF(nerf_config, bundletrack_config, roma_config, texture_config, logger=logger)
@@ -229,48 +275,48 @@ Examples:
                 downscale=texture_config['downscale'],
                 min_resolution=texture_config['min_resolution']
             )
-            logger.info("Components initialized successfully")
+            logger.progress("Components initialized successfully")
         except Exception as e:
             logger.error(f"Component initialization failed: {e}")
             raise RuntimeError(f"Failed to initialize reconstruction components: {e}")
 
         # Step 4: Run reconstruction pipeline
-        logger.info("Step 4/4: Running reconstruction pipeline...")
+        logger.progress("Step 4/4: Running reconstruction pipeline...")
         
         # Object tracking
-        logger.info("  4a. Running object tracking...")
+        logger.progress("  4a. Running object tracking...")
         try:
             start_track = time.time()
             tracker.run_track(track_dataset)
-            logger.info("  Object tracking completed")
+            logger.progress("  Object tracking completed")
             time_track = time.time() - start_track
         except Exception as e:
             logger.error(f"  Object tracking failed: {e}")
             raise RuntimeError(f"Object tracking failed: {e}")
 
         # SDF training
-        logger.info("  4b. Running SDF training...")
+        logger.progress("  4b. Running SDF training...")
         try:
             start_sdf = time.time()
             tracker.run_global_sdf(nerf_dataset)
-            logger.info("  SDF training completed")
+            logger.progress("  SDF training completed")
             time_sdf = time.time() - start_sdf
         except Exception as e:
             logger.error(f"  SDF training failed: {e}")
             raise RuntimeError(f"SDF training failed: {e}")
 
         # Texture baking
-        logger.info("  4c. Running texture baking...")
+        logger.progress("  4c. Running texture baking...")
         try:
             start_texture = time.time()
             tracker.run_texture_bake(texture_dataset)
-            logger.info("  Texture baking completed")
+            logger.progress("  Texture baking completed")
             time_texture = time.time() - start_texture
         except Exception as e:
             logger.error(f"  Texture baking failed: {e}")
             raise RuntimeError(f"Texture baking failed: {e}")
 
-        logger.info(f"Reconstruction completed successfully for {output_path}")
+        logger.progress(f"Reconstruction completed successfully for {output_path}")
         time_pipeline = time.time() - start_pipeline
         times = {
             "total": time.time() - start_total,
