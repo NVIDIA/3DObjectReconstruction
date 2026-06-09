@@ -7,7 +7,7 @@ name = "nvidia-3d-object-reconstruction"
 version = "0.2.0"
 description = "NVIDIA 3D Object Reconstruction Framework using BundleTrack and Neural Implicit Surfaces"
 readme = "README.md"
-license = {text = "NVIDIA License (Non-Commercial)"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "NVIDIA Corporation", email = "support@nvidia.com"}
 ]
@@ -25,6 +25,7 @@ keywords = [
     "NeRF"
 ]
 classifiers = [
+    "License :: OSI Approved :: Apache Software License",
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",

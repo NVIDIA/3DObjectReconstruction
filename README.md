@@ -720,9 +720,7 @@ year          = {2023},
 
 ## License
 
-This 3D Object Reconstruction example is licensed under the [NVIDIA License](./LICENSE) for non-commercial use. This project incorporates third-party components under different licenses, including BundleTrack CUDA components under CC BY-NC-SA 4.0. 
-
-**Important**: This software is restricted to non-commercial use only. NVIDIA Corporation retains commercial rights. See the [LICENSE file](./LICENSE) for complete terms and third-party attributions.
+This 3D Object Reconstruction framework is licensed under the [Apache License 2.0](./LICENSE).
 
 ## Disclaimer
 
