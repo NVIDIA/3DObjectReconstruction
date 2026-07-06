@@ -584,7 +584,7 @@ class NVBundleSDF:
         if progress_bar is not None:
             progress_bar.set_postfix_str("selecting BA keyframes", refresh=True)
         self.bundler.selectKeyFramesForBA()
-        local_frames = self.bundler._local_frames
+        local_frames = self._limit_optimization_frames(self.bundler._local_frames)
         
         # Find correspondences between all local frames
         pairs = self.bundler.getFeatureMatchPairs(local_frames)
@@ -611,6 +611,18 @@ class NVBundleSDF:
         added = self.bundler.checkAndAddKeyframe(frame)
         if added:
             self.poses[f'keyframe_{frame._id_str}']={'cam_in_ob': frame._pose_in_model.copy().tolist()}
+
+    def _limit_optimization_frames(self, local_frames: List[Frame]) -> List[Frame]:
+        max_window_size = int(self.cfg_track["bundle"]["max_BA_frames"])
+        local_frames = list(local_frames)
+        if max_window_size <= 0:
+            return []
+        if len(local_frames) <= max_window_size:
+            return local_frames
+
+        optimized_frames = local_frames[-max_window_size:]
+        return optimized_frames
+
     def run_optimization(
         self,
         local_frames: List[Frame],
@@ -633,6 +645,7 @@ class NVBundleSDF:
         # Sort frames by ID 
         if progress_bar is not None:
             progress_bar.set_postfix_str("optimizing poses: sorting frames", refresh=True)
+        local_frames = self._limit_optimization_frames(local_frames)
         local_frames_sorted = sorted(local_frames, key=lambda f: f._id)
         
         # Print frame info (like original)
