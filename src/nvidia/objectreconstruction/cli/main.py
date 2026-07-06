@@ -17,12 +17,14 @@ import argparse
 import logging
 import sys
 import os
+import re
 import shutil
 from pathlib import Path
 import uuid
 import yaml
 import time
 import torch
+from PIL import Image
 
 from nvidia.objectreconstruction.networks import NVBundleSDF
 from nvidia.objectreconstruction.dataloader import ReconstructionDataLoader
@@ -41,6 +43,89 @@ def _logger_progress(self, msg, *args, **kwargs):
 
 
 logging.Logger.progress = _logger_progress
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+_FRAME_NAME_PART_RE = re.compile(r"(\d+)")
+_MIN_STEREO_VIEW_PAIRS = 5
+
+
+def _numeric_path_sort_key(path: Path):
+    parts = []
+    for part in _FRAME_NAME_PART_RE.split(path.stem):
+        if not part:
+            continue
+        if part.isdigit():
+            parts.append((1, int(part)))
+        else:
+            parts.append((0, part.lower()))
+
+    return tuple(parts), path.suffix.lower(), path.name.lower()
+
+
+def _get_image_files(image_dir: Path):
+    return sorted(
+        [
+            path for path in image_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in _IMAGE_EXTENSIONS
+        ],
+        key=_numeric_path_sort_key,
+    )
+
+
+def _normalize_image_sequence(image_paths, prefix: str, logger: logging.Logger) -> None:
+    target_names = [f"{prefix}{index:06d}.png" for index in range(len(image_paths))]
+    if [path.name for path in image_paths] == target_names:
+        logger.progress(f"{prefix}/ images already use normalized names")
+        return
+
+    temp_paths = []
+    for image_path in image_paths:
+        temp_path = image_path.with_name(f".__normalize_{uuid.uuid4().hex}_{image_path.name}")
+        image_path.rename(temp_path)
+        temp_paths.append(temp_path)
+
+    for temp_path, target_name in zip(temp_paths, target_names):
+        target_path = temp_path.with_name(target_name)
+        if target_path.exists():
+            raise FileExistsError(f"Cannot normalize image name, target already exists: {target_path}")
+
+        if temp_path.suffix.lower() == ".png":
+            temp_path.rename(target_path)
+        else:
+            with Image.open(temp_path) as image:
+                image.save(target_path)
+            temp_path.unlink()
+
+    logger.progress(f"Normalized {len(image_paths)} {prefix}/ images")
+
+
+def _normalize_stereo_image_names(data_path: Path, logger: logging.Logger) -> None:
+    left_dir = data_path / "left"
+    right_dir = data_path / "right"
+
+    for image_dir in (left_dir, right_dir):
+        if not image_dir.exists():
+            raise FileNotFoundError(f"Required image directory not found: {image_dir}")
+        if not image_dir.is_dir():
+            raise NotADirectoryError(f"Required image path is not a directory: {image_dir}")
+
+    left_images = _get_image_files(left_dir)
+    right_images = _get_image_files(right_dir)
+
+    if not left_images:
+        raise FileNotFoundError(f"No supported images found in {left_dir}")
+    if not right_images:
+        raise FileNotFoundError(f"No supported images found in {right_dir}")
+    if len(left_images) != len(right_images):
+        raise ValueError(
+            f"Left/right image count mismatch: {len(left_images)} left images, "
+            f"{len(right_images)} right images"
+        )
+    if len(left_images) < _MIN_STEREO_VIEW_PAIRS:
+        raise ValueError("Invalid input: not enough views")
+
+    _normalize_image_sequence(left_images, "left", logger)
+    _normalize_image_sequence(right_images, "right", logger)
 
 
 def setup_logging(verbose: bool = False, debug: bool = False):
@@ -227,6 +312,7 @@ Examples:
                 shutil.copytree(item, output_path / item.name, dirs_exist_ok=True)
             else:
                 shutil.copy2(item, output_path)
+        _normalize_stereo_image_names(output_path, logger)
         logger.progress("Input data copied successfully")
 
         # Step 1: Mask extraction
