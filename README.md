@@ -608,6 +608,12 @@ Texture baking uses **pyrender** with **EGL** (or OSMesa). **CUDA working (`nvid
   + **`Texture baking failed: Invalid device ID (0)`**  or **`egl initializatio failure`** - check if egl is enabled on both container and host machine using `ls /usr/share/glvnd/egl_vendor.d/`, it should contains `10_nvidia.json`;
     + If it shows on host machine but not shows in container; Make sure you have launched containers correctlhy with `graphics` included in `-e NVIDIA_DRIVER_CAPABILITIES`
     + If it not shows on host machine; You might need to install/reinstall libnvidia-gl-<gpu-driver-version> to enable
+    + Some host machine might install nvidia-driver via different way(e.g. via Ubuntu snap) might not able to find the file at above path. 
+      + Add this environment variable to the service in `docker-compose.yml` so GLVND can find the NVIDIA EGL ICD:
+      ```yaml
+      environment:
+        - __EGL_VENDOR_LIBRARY_FILENAMES=/var/lib/snapd/hostfs/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+      ```
 
 
 
